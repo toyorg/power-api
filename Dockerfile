@@ -1,6 +1,6 @@
 # Stage 1:
 # Use base Alpine image to prepare our binary, label it 'app'
-FROM golang:1.24.3-alpine AS app
+FROM golang:1.26.1-alpine AS app
 # Add golangdocker user and group so that the Docker process in Scratch doesn't run as root
 RUN addgroup -S go \
     && adduser -S -u 10000 -g go go
