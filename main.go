@@ -11,8 +11,8 @@ import (
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/ssh"
 	"github.com/joho/godotenv"
+	"golang.org/x/crypto/ssh"
 )
 
 type State struct {
@@ -20,18 +20,18 @@ type State struct {
 }
 
 var (
-	mqttHost	 = getEnv("mqtt_host", "")
-	mqttUser	 = getEnv("mqtt_user", "")
-	mqttPass	 = getEnv("mqtt_pass", "")
-	sshHost		 = getEnv("ssh_host", "")
-	sshUser		 = getEnv("ssh_user", "")
-	sshPass		 = getEnv("ssh_pass", "")
+	mqttHost     = getEnv("mqtt_host", "")
+	mqttUser     = getEnv("mqtt_user", "")
+	mqttPass     = getEnv("mqtt_pass", "")
+	sshHost      = getEnv("ssh_host", "")
+	sshUser      = getEnv("ssh_user", "")
+	sshPass      = getEnv("ssh_pass", "")
 	moonrakerURL = getEnv("moonraker_url", "")
 )
 
 func getEnv(key, fallback string) string {
-	godotenv.Load(".env")
-	godotenv.Load("/root/power-api/.env")
+	_ = godotenv.Load(".env")
+	_ = godotenv.Load("/root/power-api/.env")
 	if value, exists := os.LookupEnv(key); exists {
 		return value
 	}
@@ -54,17 +54,15 @@ func getCurrentExtruderTemperature() int {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0
+		return 999
 	}
 
 	t := result.Result.Extruder.Temperatures
-	n := len(t)
-	if n == 0 {
-		return 0
+	if len(t) == 0 {
+		return 999
 	}
-
-	if n > 10 {
-		t = t[n-10:]
+	if len(t) > 10 {
+		t = t[len(t)-10:]
 	}
 
 	sum := 0.0
@@ -73,16 +71,13 @@ func getCurrentExtruderTemperature() int {
 	}
 
 	avg := sum / float64(len(t))
-	fmt.Printf("Average temperature: %d\n", int(avg))
 	return int(avg)
 }
 
 func sendSSHCommand(cmd string) {
 	config := &ssh.ClientConfig{
 		User: sshUser,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(sshPass),
-		},
+		Auth: []ssh.AuthMethod{ssh.Password(sshPass)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
@@ -98,7 +93,7 @@ func sendSSHCommand(cmd string) {
 	}
 	defer session.Close()
 
-	session.Run(cmd)
+	_ = session.Run(cmd)
 }
 
 func ping(host string) bool {
@@ -109,14 +104,13 @@ func ping(host string) bool {
 func subscribeAndGetStateWithContext(ctx context.Context, client MQTT.Client, topic string) (string, error) {
 	messageChan := make(chan MQTT.Message)
 
-	callback := func(client MQTT.Client, msg MQTT.Message) {
+	callback := func(_ MQTT.Client, msg MQTT.Message) {
 		messageChan <- msg
 	}
 
 	if token := client.Subscribe(topic, 0, callback); token.Wait() && token.Error() != nil {
 		return "", fmt.Errorf("error subscribing to topic: %v", token.Error())
 	}
-
 	defer func() {
 		if token := client.Unsubscribe(topic); token.Wait() && token.Error() != nil {
 			fmt.Printf("error unsubscribing from topic: %v\n", token.Error())
@@ -132,7 +126,6 @@ func subscribeAndGetStateWithContext(ctx context.Context, client MQTT.Client, to
 			return "", fmt.Errorf("error parsing message payload: %v", err)
 		}
 		return response.State, nil
-
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
@@ -148,22 +141,19 @@ func setupMQTTClient() MQTT.Client {
 		SetConnectRetryInterval(5 * time.Second).
 		SetMaxReconnectInterval(1 * time.Minute).
 		SetKeepAlive(30 * time.Second).
-		SetConnectionLostHandler(func(client MQTT.Client, err error) {
+		SetConnectionLostHandler(func(_ MQTT.Client, err error) {
 			fmt.Printf("Connection lost: %v\n", err)
 		}).
-		SetOnConnectHandler(func(client MQTT.Client) {
+		SetOnConnectHandler(func(_ MQTT.Client) {
 			fmt.Println("Connected to MQTT broker")
 		}).
-		SetReconnectingHandler(func(client MQTT.Client, opts *MQTT.ClientOptions) {
+		SetReconnectingHandler(func(_ MQTT.Client, _ *MQTT.ClientOptions) {
 			fmt.Println("Attempting to reconnect to MQTT broker...")
 		})
 
 	client := MQTT.NewClient(opts)
-
-	// Initial connection
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
 		fmt.Printf("Failed to connect to MQTT broker: %v\n", token.Error())
-		// Retry initial connection with backoff
 		for i := 0; i < 5; i++ {
 			time.Sleep(time.Duration(i+1) * time.Second)
 			if token := client.Connect(); token.Wait() && token.Error() == nil {
@@ -235,7 +225,7 @@ func main() {
 				time.Sleep(5 * time.Second)
 			}
 
-			time.Sleep(5 * time.Second) // additional sleep for safe shutdown
+			time.Sleep(5 * time.Second)
 
 			token := client.Publish("zigbee2mqtt/R/set", 0, false, `{"state": "OFF"}`)
 			token.Wait()
