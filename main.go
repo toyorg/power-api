@@ -20,12 +20,12 @@ type State struct {
 }
 
 var (
-	mqttHost     = getEnv("mqtt_host", "")
-	mqttUser     = getEnv("mqtt_user", "")
-	mqttPass     = getEnv("mqtt_pass", "")
-	sshHost      = getEnv("ssh_host", "")
-	sshUser      = getEnv("ssh_user", "")
-	sshPass      = getEnv("ssh_pass", "")
+	mqttHost	 = getEnv("mqtt_host", "")
+	mqttUser	 = getEnv("mqtt_user", "")
+	mqttPass	 = getEnv("mqtt_pass", "")
+	sshHost		 = getEnv("ssh_host", "")
+	sshUser		 = getEnv("ssh_user", "")
+	sshPass		 = getEnv("ssh_pass", "")
 	moonrakerURL = getEnv("moonraker_url", "")
 )
 
@@ -57,10 +57,24 @@ func getCurrentExtruderTemperature() int {
 		return 0
 	}
 
-	if len(result.Result.Extruder.Temperatures) > 0 {
-		return int(result.Result.Extruder.Temperatures[len(result.Result.Extruder.Temperatures)-1])
+	t := result.Result.Extruder.Temperatures
+	n := len(t)
+	if n == 0 {
+		return 0
 	}
-	return 0
+
+	if n > 10 {
+		t = t[n-10:]
+	}
+
+	sum := 0.0
+	for _, v := range t {
+		sum += v
+	}
+
+	avg := sum / float64(len(t))
+	fmt.Printf("Average temperature: %d\n", int(avg))
+	return int(avg)
 }
 
 func sendSSHCommand(cmd string) {
@@ -211,7 +225,7 @@ func main() {
 			token.Wait()
 			c.JSON(http.StatusOK, State{State: "ON"})
 		case "OFF":
-			for getCurrentExtruderTemperature() >= 50 {
+			for getCurrentExtruderTemperature() >= 49 {
 				time.Sleep(5 * time.Second)
 			}
 
