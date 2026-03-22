@@ -58,19 +58,29 @@ func getCurrentExtruderTemperature() int {
 	}
 
 	t := result.Result.Extruder.Temperatures
-	if len(t) == 0 {
+	if len(t) <= 10 {
 		return 999
 	}
-	if len(t) > 10 {
-		t = t[len(t)-10:]
+
+	t = t[len(t)-10:]
+
+	var filtered []float64
+	for _, v := range t {
+		if v >= 1 && v <= 400 {
+			filtered = append(filtered, v)
+		}
+	}
+
+	if len(filtered) <= 5 {
+		return 999
 	}
 
 	sum := 0.0
-	for _, v := range t {
+	for _, v := range filtered {
 		sum += v
 	}
 
-	avg := sum / float64(len(t))
+	avg := sum / float64(len(filtered))
 	return int(avg)
 }
 
