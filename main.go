@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
@@ -19,8 +20,8 @@ type State struct {
 	State string `json:"state"`
 }
 
-_ = godotenv.Load(".env")
-_ = godotenv.Load("/root/power-api/.env")
+var _ = godotenv.Load(".env")
+var _ = godotenv.Load("/root/power-api/.env")
 
 var (
 	mqttHost     = getEnv("mqtt_host", "")
@@ -33,11 +34,42 @@ var (
 	thresholdTemp = getEnv("threshold_temp", 49)
 )
 
-func getEnv(key, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
+func getEnv[T any](key string, fallback T) T {
+	value, exists := os.LookupEnv(key)
+	if !exists {
+		return fallback
 	}
-	return fallback
+
+	switch any(fallback).(type) {
+	case string:
+		return any(value).(T)
+	case int:
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fallback
+		}
+		return any(parsed).(T)
+	case int64:
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return fallback
+		}
+		return any(parsed).(T)
+	case float64:
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fallback
+		}
+		return any(parsed).(T)
+	case bool:
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fallback
+		}
+		return any(parsed).(T)
+	default:
+		return fallback
+	}
 }
 
 func getCurrentExtruderTemperature() int {
