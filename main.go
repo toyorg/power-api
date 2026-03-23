@@ -19,6 +19,9 @@ type State struct {
 	State string `json:"state"`
 }
 
+_ = godotenv.Load(".env")
+_ = godotenv.Load("/root/power-api/.env")
+
 var (
 	mqttHost     = getEnv("mqtt_host", "")
 	mqttUser     = getEnv("mqtt_user", "")
@@ -27,11 +30,10 @@ var (
 	sshUser      = getEnv("ssh_user", "")
 	sshPass      = getEnv("ssh_pass", "")
 	moonrakerURL = getEnv("moonraker_url", "")
+	thresholdTemp = getEnv("threshold_temp", 49)
 )
 
 func getEnv(key, fallback string) string {
-	_ = godotenv.Load(".env")
-	_ = godotenv.Load("/root/power-api/.env")
 	if value, exists := os.LookupEnv(key); exists {
 		return value
 	}
@@ -225,7 +227,7 @@ func main() {
 			token.Wait()
 			c.JSON(http.StatusOK, State{State: "ON"})
 		case "OFF":
-			for getCurrentExtruderTemperature() >= 49 {
+			for getCurrentExtruderTemperature() >= thresholdTemp {
 				time.Sleep(5 * time.Second)
 			}
 
