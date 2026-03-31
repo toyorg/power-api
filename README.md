@@ -31,6 +31,7 @@ ssh_host=<SSH host address>
 ssh_user=<SSH username>
 ssh_pass=<SSH password>
 moonraker_url=<Moonraker API URL>
+threshold_temp=<turn off temperature threshold>
 ```
 
 ## Installation
