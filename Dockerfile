@@ -1,4 +1,4 @@
-FROM golang:1.26.1-alpine AS app
+FROM golang:1.26.2-alpine AS app
 RUN addgroup -S go && adduser -S -u 10000 -g go go
 WORKDIR /go/src/app
 COPY go.mod .
