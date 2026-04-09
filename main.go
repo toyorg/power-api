@@ -4,303 +4,418 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
 	"time"
 
-	MQTT "github.com/eclipse/paho.mqtt.golang"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/ssh"
 )
 
-type State struct {
+type StateRequest struct {
+	State string `json:"state" binding:"required,oneof=ON OFF"`
+}
+
+type StateResponse struct {
 	State string `json:"state"`
 }
 
-var _ = godotenv.Load(".env")
-var _ = godotenv.Load("/root/power-api/.env")
-
-var (
-	mqttHost     = getEnv("mqtt_host", "")
-	mqttUser     = getEnv("mqtt_user", "")
-	mqttPass     = getEnv("mqtt_pass", "")
-	sshHost      = getEnv("ssh_host", "")
-	sshUser      = getEnv("ssh_user", "")
-	sshPass      = getEnv("ssh_pass", "")
-	moonrakerURL = getEnv("moonraker_url", "")
-	thresholdTemp = getEnv("threshold_temp", 49)
-)
-
-func getEnv[T any](key string, fallback T) T {
-	value, exists := os.LookupEnv(key)
-	if !exists {
-		return fallback
-	}
-
-	switch any(fallback).(type) {
-	case string:
-		return any(value).(T)
-	case int:
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return fallback
-		}
-		return any(parsed).(T)
-	case int64:
-		parsed, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return fallback
-		}
-		return any(parsed).(T)
-	case float64:
-		parsed, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return fallback
-		}
-		return any(parsed).(T)
-	case bool:
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return fallback
-		}
-		return any(parsed).(T)
-	default:
-		return fallback
-	}
+type Config struct {
+	MQTTHost      string
+	MQTTUser      string
+	MQTTPass      string
+	SSHHost       string
+	SSHUser       string
+	SSHPass       string
+	MoonrakerURL  string
+	ThresholdTemp int
 }
 
-func isPrinterFinished() bool {
-	resp, err := http.Get(fmt.Sprintf("%s/printer/objects/query?print_stats", moonrakerURL))
+func loadConfig() (*Config, error) {
+	_ = godotenv.Load(".env")
+	_ = godotenv.Load("/root/power-api/.env")
+
+	return &Config{
+		MQTTHost:      getenvString("mqtt_host", ""),
+		MQTTUser:      getenvString("mqtt_user", ""),
+		MQTTPass:      getenvString("mqtt_pass", ""),
+		SSHHost:       getenvString("ssh_host", ""),
+		SSHUser:       getenvString("ssh_user", ""),
+		SSHPass:       getenvString("ssh_pass", ""),
+		MoonrakerURL:  getenvString("moonraker_url", ""),
+		ThresholdTemp: getenvInt("threshold_temp", 49),
+	}, nil
+}
+
+// Helper functions for environment variable retrieval
+func getenvString(key, defaultVal string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return val
+	}
+	return defaultVal
+}
+
+func getenvInt(key string, defaultVal int) int {
+	val, ok := os.LookupEnv(key)
+	if !ok {
+		return defaultVal
+	}
+	parsed, err := strconv.Atoi(val)
 	if err != nil {
-		return false
+		return defaultVal
+	}
+	return parsed
+}
+
+// Moonraker API responses
+type printerStatusResponse struct {
+	Result struct {
+		Status struct {
+			PrintStats struct {
+				State string `json:"state"`
+			} `json:"print_stats"`
+		} `json:"status"`
+	} `json:"result"`
+}
+
+type temperatureResponse struct {
+	Result struct {
+		Extruder struct {
+			Temperatures []float64 `json:"temperatures"`
+		} `json:"extruder"`
+	} `json:"result"`
+}
+
+type mqttStateMessage struct {
+	State string `json:"state"`
+}
+
+// isPrinterFinished checks if the printer has finished printing.
+func isPrinterFinished(ctx context.Context, baseURL string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/printer/objects/query?print_stats", baseURL), nil)
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
 	}
 	defer resp.Body.Close()
 
-	var result struct {
-		Result struct {
-			Status struct {
-				PrintStats struct {
-					State string `json:"state"`
-				} `json:"print_stats"`
-			} `json:"status"`
-		} `json:"result"`
-	}
-
+	var result printerStatusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return false
+		return false, fmt.Errorf("failed to decode printer status: %w", err)
 	}
 
 	state := result.Result.Status.PrintStats.State
-	return state == "standby" || state == "complete"
+	return state == "standby" || state == "complete", nil
 }
 
-func getCurrentExtruderTemperature() int {
-	resp, err := http.Get(fmt.Sprintf("%s/server/temperature_store", moonrakerURL))
+// getCurrentExtruderTemperature fetches and calculates the average extruder temperature.
+func getCurrentExtruderTemperature(ctx context.Context, baseURL string) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/server/temperature_store", baseURL), nil)
 	if err != nil {
-		return 0
+		return 0, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
 	}
 	defer resp.Body.Close()
 
-	var result struct {
-		Result struct {
-			Extruder struct {
-				Temperatures []float64 `json:"temperatures"`
-			} `json:"extruder"`
-		} `json:"result"`
-	}
-
+	var result temperatureResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 999
+		return 0, fmt.Errorf("failed to decode temperature data: %w", err)
 	}
 
-	t := result.Result.Extruder.Temperatures
-	if len(t) <= 10 {
-		return 999
+	temps := result.Result.Extruder.Temperatures
+	if len(temps) <= 10 {
+		return 0, fmt.Errorf("insufficient temperature data: got %d samples", len(temps))
 	}
 
-	t = t[len(t)-10:]
+	// Keep only the last 10 samples
+	temps = temps[len(temps)-10:]
 
+	// Filter out invalid readings
 	var filtered []float64
-	for _, v := range t {
+	for _, v := range temps {
 		if v >= 1 && v <= 400 {
 			filtered = append(filtered, v)
 		}
 	}
 
 	if len(filtered) <= 5 {
-		return 999
+		return 0, fmt.Errorf("not enough valid temperature readings after filtering: %d", len(filtered))
 	}
 
+	// Calculate average
 	sum := 0.0
 	for _, v := range filtered {
 		sum += v
 	}
-
 	avg := sum / float64(len(filtered))
-	return int(avg)
+	return int(avg), nil
 }
 
-func sendSSHCommand(cmd string) {
+// sendSSHCommand executes a command on a remote SSH host.
+func sendSSHCommand(ctx context.Context, host, user, pass, command string) error {
 	config := &ssh.ClientConfig{
-		User: sshUser,
-		Auth: []ssh.AuthMethod{ssh.Password(sshPass)},
+		User: user,
+		Auth: []ssh.AuthMethod{ssh.Password(pass)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
-	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", sshHost), config)
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", host), config)
 	if err != nil {
-		return
+		return fmt.Errorf("failed to connect via SSH: %w", err)
 	}
 	defer client.Close()
 
 	session, err := client.NewSession()
 	if err != nil {
-		return
+		return fmt.Errorf("failed to create SSH session: %w", err)
 	}
 	defer session.Close()
 
-	_ = session.Run(cmd)
+	// Execute command with context support via goroutine
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- session.Run(command)
+	}()
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			return fmt.Errorf("failed to execute command: %w", err)
+		}
+	case <-ctx.Done():
+		session.Close()
+		return fmt.Errorf("command execution cancelled: %w", ctx.Err())
+	}
+	return nil
 }
 
-func ping(host string) bool {
-	cmd := exec.Command("ping", "-c", "1", host)
+// isHostReachable checks if a host is reachable via ping.
+func isHostReachable(ctx context.Context, host string) bool {
+	cmd := exec.CommandContext(ctx, "ping", "-c", "1", host)
 	return cmd.Run() == nil
 }
 
-func subscribeAndGetStateWithContext(ctx context.Context, client MQTT.Client, topic string) (string, error) {
-	messageChan := make(chan MQTT.Message)
+// getMQTTState retrieves the current state from an MQTT topic with a timeout.
+func getMQTTState(ctx context.Context, client mqtt.Client, topic string) (string, error) {
+	messageChan := make(chan string, 1)
+	errChan := make(chan error, 1)
 
-	callback := func(_ MQTT.Client, msg MQTT.Message) {
-		messageChan <- msg
+	callback := func(_ mqtt.Client, msg mqtt.Message) {
+		var response mqttStateMessage
+		if err := json.Unmarshal(msg.Payload(), &response); err != nil {
+			errChan <- fmt.Errorf("failed to parse MQTT message: %w", err)
+			return
+		}
+		messageChan <- response.State
 	}
 
-	if token := client.Subscribe(topic, 0, callback); token.Wait() && token.Error() != nil {
-		return "", fmt.Errorf("error subscribing to topic: %v", token.Error())
+	token := client.Subscribe(topic, 0, callback)
+	if !token.WaitTimeout(5 * time.Second) || token.Error() != nil {
+		return "", fmt.Errorf("failed to subscribe to topic %s: %v", topic, token.Error())
 	}
 	defer func() {
-		if token := client.Unsubscribe(topic); token.Wait() && token.Error() != nil {
-			fmt.Printf("error unsubscribing from topic: %v\n", token.Error())
+		token := client.Unsubscribe(topic)
+		if !token.WaitTimeout(5 * time.Second) || token.Error() != nil {
+			log.Printf("warning: failed to unsubscribe from topic %s: %v", topic, token.Error())
 		}
 	}()
 
 	select {
-	case msg := <-messageChan:
-		var response struct {
-			State string `json:"state"`
-		}
-		if err := json.Unmarshal(msg.Payload(), &response); err != nil {
-			return "", fmt.Errorf("error parsing message payload: %v", err)
-		}
-		return response.State, nil
+	case state := <-messageChan:
+		return state, nil
+	case err := <-errChan:
+		return "", err
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", fmt.Errorf("context cancelled: %w", ctx.Err())
 	}
 }
 
-func setupMQTTClient() MQTT.Client {
-	opts := MQTT.NewClientOptions().
-		AddBroker(fmt.Sprintf("tcp://%s:1883", mqttHost)).
-		SetUsername(mqttUser).
-		SetPassword(mqttPass).
+// newMQTTClient creates and connects to an MQTT broker.
+func newMQTTClient(host, user, pass string) (mqtt.Client, error) {
+	opts := mqtt.NewClientOptions().
+		AddBroker(fmt.Sprintf("tcp://%s:1883", host)).
+		SetUsername(user).
+		SetPassword(pass).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(5 * time.Second).
 		SetMaxReconnectInterval(1 * time.Minute).
 		SetKeepAlive(30 * time.Second).
-		SetConnectionLostHandler(func(_ MQTT.Client, err error) {
-			fmt.Printf("Connection lost: %v\n", err)
+		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+			log.Printf("MQTT connection lost: %v", err)
 		}).
-		SetOnConnectHandler(func(_ MQTT.Client) {
-			fmt.Println("Connected to MQTT broker")
+		SetOnConnectHandler(func(_ mqtt.Client) {
+			log.Println("Connected to MQTT broker")
 		}).
-		SetReconnectingHandler(func(_ MQTT.Client, _ *MQTT.ClientOptions) {
-			fmt.Println("Attempting to reconnect to MQTT broker...")
+		SetReconnectingHandler(func(_ mqtt.Client, _ *mqtt.ClientOptions) {
+			log.Println("Attempting to reconnect to MQTT broker...")
 		})
 
-	client := MQTT.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		fmt.Printf("Failed to connect to MQTT broker: %v\n", token.Error())
-		for i := 0; i < 5; i++ {
-			time.Sleep(time.Duration(i+1) * time.Second)
-			if token := client.Connect(); token.Wait() && token.Error() == nil {
-				break
-			}
-			fmt.Printf("Retry %d failed\n", i+1)
-		}
-		if !client.IsConnected() {
-			panic("Failed to connect to MQTT broker after multiple attempts")
-		}
+	client := mqtt.NewClient(opts)
+	token := client.Connect()
+	if !token.WaitTimeout(10 * time.Second) {
+		return nil, fmt.Errorf("MQTT connection timeout")
+	}
+	if token.Error() != nil {
+		return nil, fmt.Errorf("failed to connect to MQTT broker: %w", token.Error())
 	}
 
-	return client
-}
-
-func ensureConnected(client MQTT.Client) error {
-	if !client.IsConnected() {
-		if token := client.Connect(); token.Wait() && token.Error() != nil {
-			return fmt.Errorf("failed to reconnect to MQTT broker: %v", token.Error())
-		}
-	}
-	return nil
+	return client, nil
 }
 
 func main() {
+	config, err := loadConfig()
+	if err != nil {
+		log.Fatalf("failed to load configuration: %v", err)
+	}
+
+	mqttClient, err := newMQTTClient(config.MQTTHost, config.MQTTUser, config.MQTTPass)
+	if err != nil {
+		log.Fatalf("failed to connect to MQTT: %v", err)
+	}
+	defer mqttClient.Disconnect(250)
+
 	gin.SetMode(gin.ReleaseMode)
-	r := gin.Default()
+	router := gin.Default()
 
-	client := setupMQTTClient()
-	defer client.Disconnect(250)
+	// GET printer state
+	router.GET("/api/3d-printer", handleGetPrinterState(mqttClient, config))
 
-	r.GET("/api/3d-printer", func(c *gin.Context) {
-		if err := ensureConnected(client); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "MQTT connection unavailable"})
-			return
-		}
+	// POST to control printer
+	router.POST("/api/3d-printer", handlePostPrinterControl(mqttClient, config))
 
+	log.Println("Starting server on :8000")
+	if err := router.Run(":8000"); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
+}
+
+func handleGetPrinterState(client mqtt.Client, cfg *Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		state, err := subscribeAndGetStateWithContext(ctx, client, "zigbee2mqtt/R")
+		state, err := getMQTTState(ctx, client, "zigbee2mqtt/R")
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Printf("failed to get printer state: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve printer state"})
 			return
 		}
-		c.JSON(http.StatusOK, State{State: state})
-	})
+		c.JSON(http.StatusOK, StateResponse{State: state})
+	}
+}
 
-	r.POST("/api/3d-printer", func(c *gin.Context) {
-		var reqBody State
-		if err := c.BindJSON(&reqBody); err != nil {
+func handlePostPrinterControl(client mqtt.Client, cfg *Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req StateRequest
+		if err := c.BindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		switch reqBody.State {
+		ctx := c.Request.Context()
+
+		switch req.State {
 		case "ON":
-			token := client.Publish("zigbee2mqtt/R/set", 0, false, `{"state": "ON"}`)
-			token.Wait()
-			c.JSON(http.StatusOK, State{State: "ON"})
+			if err := publishMQTTState(client, "zigbee2mqtt/R/set", "ON"); err != nil {
+				log.Printf("failed to publish ON state: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to turn on printer"})
+				return
+			}
+			c.JSON(http.StatusOK, StateResponse{State: "ON"})
+
 		case "OFF":
-			for !isPrinterFinished() && getCurrentExtruderTemperature() >= thresholdTemp {
-				time.Sleep(5 * time.Second)
+			if err := shutdownPrinter(ctx, client, cfg); err != nil {
+				log.Printf("shutdown error: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
 			}
+			c.JSON(http.StatusOK, StateResponse{State: "OFF"})
 
-			sendSSHCommand("/sbin/shutdown 0")
-
-			for ping(sshHost) {
-				time.Sleep(5 * time.Second)
-			}
-
-			token := client.Publish("zigbee2mqtt/R/set", 0, false, `{"state": "OFF"}`)
-			token.Wait()
-			c.JSON(http.StatusOK, State{State: "OFF"})
 		default:
-			c.JSON(http.StatusOK, State{State: ""})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid state"})
 		}
-	})
+	}
+}
 
-	r.Run(":8000")
+func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error {
+	// Wait for printer to finish and cool down
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		finished, err := isPrinterFinished(ctx, cfg.MoonrakerURL)
+		if err != nil {
+			log.Printf("error checking printer status: %v", err)
+			continue
+		}
+
+		temp, err := getCurrentExtruderTemperature(ctx, cfg.MoonrakerURL)
+		if err != nil {
+			log.Printf("error getting temperature: %v", err)
+			continue
+		}
+
+		if finished && temp < cfg.ThresholdTemp {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	// Shutdown the remote host
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := sendSSHCommand(shutdownCtx, cfg.SSHHost, cfg.SSHUser, cfg.SSHPass, "/sbin/shutdown 0"); err != nil {
+		log.Printf("failed to send shutdown command: %v", err)
+	}
+
+	// Wait for host to go offline
+	pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for isHostReachable(pollCtx, cfg.SSHHost) {
+		select {
+		case <-pollCtx.Done():
+			break
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	// Turn off the relay
+	if err := publishMQTTState(client, "zigbee2mqtt/R/set", "OFF"); err != nil {
+		return fmt.Errorf("failed to publish OFF state: %w", err)
+	}
+
+	return nil
+}
+
+func publishMQTTState(client mqtt.Client, topic, state string) error {
+	payload := fmt.Sprintf(`{"state": "%s"}`, state)
+	token := client.Publish(topic, 0, false, payload)
+	if !token.WaitTimeout(5 * time.Second) || token.Error() != nil {
+		return fmt.Errorf("failed to publish to topic %s: %v", topic, token.Error())
+	}
+	return nil
 }
