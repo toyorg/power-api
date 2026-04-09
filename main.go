@@ -73,7 +73,7 @@ func getEnv[T any](key string, fallback T) T {
 }
 
 func isPrinterFinished() bool {
-	resp, err := http.Get(fmt.Sprintf("%s/server/print_stats", moonrakerURL))
+	resp, err := http.Get(fmt.Sprintf("%s/printer/objects/query?print_stats", moonrakerURL))
 	if err != nil {
 		return false
 	}
@@ -81,7 +81,11 @@ func isPrinterFinished() bool {
 
 	var result struct {
 		Result struct {
-			State string `json:"state"`
+			Status struct {
+				PrintStats struct {
+					State string `json:"state"`
+				} `json:"print_stats"`
+			} `json:"status"`
 		} `json:"result"`
 	}
 
@@ -89,7 +93,7 @@ func isPrinterFinished() bool {
 		return false
 	}
 
-	state := result.Result.State
+	state := result.Result.Status.PrintStats.State
 	return state == "standby" || state == "complete"
 }
 
