@@ -72,6 +72,27 @@ func getEnv[T any](key string, fallback T) T {
 	}
 }
 
+func isPrinterFinished() bool {
+	resp, err := http.Get(fmt.Sprintf("%s/server/print_stats", moonrakerURL))
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Result struct {
+			State string `json:"state"`
+		} `json:"result"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false
+	}
+
+	state := result.Result.State
+	return state == "standby" || state == "complete"
+}
+
 func getCurrentExtruderTemperature() int {
 	resp, err := http.Get(fmt.Sprintf("%s/server/temperature_store", moonrakerURL))
 	if err != nil {
@@ -259,7 +280,7 @@ func main() {
 			token.Wait()
 			c.JSON(http.StatusOK, State{State: "ON"})
 		case "OFF":
-			for getCurrentExtruderTemperature() >= thresholdTemp {
+			for !isPrinterFinished() && getCurrentExtruderTemperature() >= thresholdTemp {
 				time.Sleep(5 * time.Second)
 			}
 
