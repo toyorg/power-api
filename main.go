@@ -294,8 +294,6 @@ func main() {
 				time.Sleep(5 * time.Second)
 			}
 
-			time.Sleep(5 * time.Second)
-
 			token := client.Publish("zigbee2mqtt/R/set", 0, false, `{"state": "OFF"}`)
 			token.Wait()
 			c.JSON(http.StatusOK, State{State: "OFF"})
