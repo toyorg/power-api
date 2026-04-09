@@ -17,14 +17,27 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+const (
+	defaultThresholdTemp = 49
+	mqttConnectTimeout   = 10 * time.Second
+	mqttCommandTimeout   = 5 * time.Second
+	sshCommandTimeout    = 10 * time.Second
+	hostPollTimeout      = 30 * time.Second
+	pollInterval         = 5 * time.Second
+	serverPort           = ":8000"
+)
+
+// StateRequest represents a request to change printer state.
 type StateRequest struct {
 	State string `json:"state" binding:"required,oneof=ON OFF"`
 }
 
+// StateResponse represents the response with printer state.
 type StateResponse struct {
 	State string `json:"state"`
 }
 
+// Config holds application configuration.
 type Config struct {
 	MQTTHost      string
 	MQTTUser      string
@@ -36,6 +49,7 @@ type Config struct {
 	ThresholdTemp int
 }
 
+// loadConfig loads the application configuration from environment variables.
 func loadConfig() (*Config, error) {
 	_ = godotenv.Load(".env")
 	_ = godotenv.Load("/root/power-api/.env")
@@ -48,11 +62,11 @@ func loadConfig() (*Config, error) {
 		SSHUser:       getenvString("ssh_user", ""),
 		SSHPass:       getenvString("ssh_pass", ""),
 		MoonrakerURL:  getenvString("moonraker_url", ""),
-		ThresholdTemp: getenvInt("threshold_temp", 49),
+		ThresholdTemp: getenvInt("threshold_temp", defaultThresholdTemp),
 	}, nil
 }
 
-// Helper functions for environment variable retrieval
+// getenvString retrieves a string environment variable with a default value.
 func getenvString(key, defaultVal string) string {
 	if val, ok := os.LookupEnv(key); ok {
 		return val
@@ -60,6 +74,7 @@ func getenvString(key, defaultVal string) string {
 	return defaultVal
 }
 
+// getenvInt retrieves an integer environment variable with a default value.
 func getenvInt(key string, defaultVal int) int {
 	val, ok := os.LookupEnv(key)
 	if !ok {
@@ -72,7 +87,7 @@ func getenvInt(key string, defaultVal int) int {
 	return parsed
 }
 
-// Moonraker API responses
+// printerStatusResponse represents the printer status from Moonraker API.
 type printerStatusResponse struct {
 	Result struct {
 		Status struct {
@@ -83,6 +98,7 @@ type printerStatusResponse struct {
 	} `json:"result"`
 }
 
+// temperatureResponse represents the temperature data from Moonraker API.
 type temperatureResponse struct {
 	Result struct {
 		Extruder struct {
@@ -91,6 +107,7 @@ type temperatureResponse struct {
 	} `json:"result"`
 }
 
+// mqttStateMessage represents the state message structure from MQTT.
 type mqttStateMessage struct {
 	State string `json:"state"`
 }
@@ -143,17 +160,23 @@ func getCurrentExtruderTemperature(ctx context.Context, baseURL string) (int, er
 	}
 
 	// Keep only the last 10 samples
-	temps = temps[len(temps)-10:]
+	const maxSamples = 10
+	if len(temps) > maxSamples {
+		temps = temps[len(temps)-maxSamples:]
+	}
 
 	// Filter out invalid readings
+	const minTemp = 1
+	const maxTemp = 400
 	var filtered []float64
 	for _, v := range temps {
-		if v >= 1 && v <= 400 {
+		if v >= minTemp && v <= maxTemp {
 			filtered = append(filtered, v)
 		}
 	}
 
-	if len(filtered) <= 5 {
+	const minValidReadings = 5
+	if len(filtered) <= minValidReadings {
 		return 0, fmt.Errorf("not enough valid temperature readings after filtering: %d", len(filtered))
 	}
 
@@ -169,8 +192,8 @@ func getCurrentExtruderTemperature(ctx context.Context, baseURL string) (int, er
 // sendSSHCommand executes a command on a remote SSH host.
 func sendSSHCommand(ctx context.Context, host, user, pass, command string) error {
 	config := &ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{ssh.Password(pass)},
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.Password(pass)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
@@ -225,12 +248,12 @@ func getMQTTState(ctx context.Context, client mqtt.Client, topic string) (string
 	}
 
 	token := client.Subscribe(topic, 0, callback)
-	if !token.WaitTimeout(5 * time.Second) || token.Error() != nil {
+	if !token.WaitTimeout(mqttCommandTimeout) || token.Error() != nil {
 		return "", fmt.Errorf("failed to subscribe to topic %s: %v", topic, token.Error())
 	}
 	defer func() {
 		token := client.Unsubscribe(topic)
-		if !token.WaitTimeout(5 * time.Second) || token.Error() != nil {
+		if !token.WaitTimeout(mqttCommandTimeout) || token.Error() != nil {
 			log.Printf("warning: failed to unsubscribe from topic %s: %v", topic, token.Error())
 		}
 	}()
@@ -268,7 +291,7 @@ func newMQTTClient(host, user, pass string) (mqtt.Client, error) {
 
 	client := mqtt.NewClient(opts)
 	token := client.Connect()
-	if !token.WaitTimeout(10 * time.Second) {
+	if !token.WaitTimeout(mqttConnectTimeout) {
 		return nil, fmt.Errorf("MQTT connection timeout")
 	}
 	if token.Error() != nil {
@@ -300,14 +323,14 @@ func main() {
 	router.POST("/api/3d-printer", handlePostPrinterControl(mqttClient, config))
 
 	log.Println("Starting server on :8000")
-	if err := router.Run(":8000"); err != nil {
+	if err := router.Run(serverPort); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }
 
 func handleGetPrinterState(client mqtt.Client, cfg *Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), mqttCommandTimeout)
 		defer cancel()
 
 		state, err := getMQTTState(ctx, client, "zigbee2mqtt/R")
@@ -381,25 +404,25 @@ func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(5 * time.Second):
+		case <-time.After(pollInterval):
 		}
 	}
 
 	// Shutdown the remote host
-	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(ctx, sshCommandTimeout)
 	defer cancel()
 	if err := sendSSHCommand(shutdownCtx, cfg.SSHHost, cfg.SSHUser, cfg.SSHPass, "/sbin/shutdown 0"); err != nil {
 		log.Printf("failed to send shutdown command: %v", err)
 	}
 
 	// Wait for host to go offline
-	pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	pollCtx, cancel := context.WithTimeout(ctx, hostPollTimeout)
 	defer cancel()
 	for isHostReachable(pollCtx, cfg.SSHHost) {
 		select {
 		case <-pollCtx.Done():
 			break
-		case <-time.After(5 * time.Second):
+		case <-time.After(pollInterval):
 		}
 	}
 
