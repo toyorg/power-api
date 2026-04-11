@@ -397,6 +397,8 @@ func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error
 			continue
 		}
 
+		log.Printf("Printer finished: %v, Current temp: %d°C, threshold: %d°C", finished, temp, cfg.ThresholdTemp)
+
 		if finished && temp < cfg.ThresholdTemp {
 			break
 		}
@@ -421,7 +423,7 @@ func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error
 	for isHostReachable(pollCtx, cfg.SSHHost) {
 		select {
 		case <-pollCtx.Done():
-			break
+			return pollCtx.Err()
 		case <-time.After(pollInterval):
 		}
 	}
@@ -437,7 +439,7 @@ func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error
 func publishMQTTState(client mqtt.Client, topic, state string) error {
 	payload := fmt.Sprintf(`{"state": "%s"}`, state)
 	token := client.Publish(topic, 0, false, payload)
-	if !token.WaitTimeout(5 * time.Second) || token.Error() != nil {
+	if !token.WaitTimeout(5*time.Second) || token.Error() != nil {
 		return fmt.Errorf("failed to publish to topic %s: %v", topic, token.Error())
 	}
 	return nil
