@@ -178,7 +178,7 @@ func getCurrentExtruderTemperature(baseURL string) (int, error) {
 }
 
 // sendSSHCommand executes a command on a remote SSH host.
-func sendSSHCommand(ctx context.Context, host, user, pass, command string) error {
+func sendSSHCommand(host, user, pass, command string) error {
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.Password(pass)},
@@ -197,21 +197,8 @@ func sendSSHCommand(ctx context.Context, host, user, pass, command string) error
 	}
 	defer session.Close()
 
-	// Execute command with context support via goroutine
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- session.Run(command)
-	}()
+	_ = session.Run(command)
 
-	select {
-	case err := <-errChan:
-		if err != nil {
-			return fmt.Errorf("failed to execute command: %w", err)
-		}
-	case <-ctx.Done():
-		session.Close()
-		return fmt.Errorf("command execution cancelled: %w", ctx.Err())
-	}
 	return nil
 }
 
@@ -339,8 +326,6 @@ func handlePostPrinterControl(client mqtt.Client, cfg *Config) gin.HandlerFunc {
 			return
 		}
 
-		ctx := c.Request.Context()
-
 		switch req.State {
 		case "ON":
 			if err := publishMQTTState(client, "zigbee2mqtt/R/set", "ON"); err != nil {
@@ -351,7 +336,7 @@ func handlePostPrinterControl(client mqtt.Client, cfg *Config) gin.HandlerFunc {
 			c.JSON(http.StatusOK, StateResponse{State: "ON"})
 
 		case "OFF":
-			if err := shutdownPrinter(ctx, client, cfg); err != nil {
+			if err := shutdownPrinter(client, cfg); err != nil {
 				log.Printf("shutdown error: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -364,7 +349,7 @@ func handlePostPrinterControl(client mqtt.Client, cfg *Config) gin.HandlerFunc {
 	}
 }
 
-func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error {
+func shutdownPrinter(client mqtt.Client, cfg *Config) error {
 	// Wait for printer to finish and cool down
 	for {
 		finished, err := isPrinterFinished(cfg.MoonrakerURL)
@@ -388,9 +373,7 @@ func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error
 	}
 
 	// Shutdown the remote host
-	shutdownCtx, cancel := context.WithTimeout(ctx, sshCommandTimeout)
-	defer cancel()
-	if err := sendSSHCommand(shutdownCtx, cfg.SSHHost, cfg.SSHUser, cfg.SSHPass, "/sbin/shutdown 0"); err != nil {
+	if err := sendSSHCommand(cfg.SSHHost, cfg.SSHUser, cfg.SSHPass, "/sbin/shutdown 0"); err != nil {
 		log.Printf("failed to send shutdown command: %v", err)
 	}
 
