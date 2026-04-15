@@ -228,8 +228,8 @@ func sendSSHCommand(ctx context.Context, host, user, pass, command string) error
 }
 
 // isHostReachable checks if a host is reachable via ping.
-func isHostReachable(ctx context.Context, host string) bool {
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", host)
+func isHostReachable(host string) bool {
+	cmd := exec.Command("ping", "-c", "1", host)
 	return cmd.Run() == nil
 }
 
@@ -379,12 +379,6 @@ func handlePostPrinterControl(client mqtt.Client, cfg *Config) gin.HandlerFunc {
 func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error {
 	// Wait for printer to finish and cool down
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		finished, err := isPrinterFinished(ctx, cfg.MoonrakerURL)
 		if err != nil {
 			log.Printf("error checking printer status: %v", err)
@@ -402,12 +396,7 @@ func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error
 		if finished && temp < cfg.ThresholdTemp {
 			break
 		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(pollInterval):
-		}
+		time.Sleep(pollInterval)
 	}
 
 	// Shutdown the remote host
@@ -418,14 +407,8 @@ func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error
 	}
 
 	// Wait for host to go offline
-	pollCtx, cancel := context.WithTimeout(ctx, hostPollTimeout)
-	defer cancel()
-	for isHostReachable(pollCtx, cfg.SSHHost) {
-		select {
-		case <-pollCtx.Done():
-			return pollCtx.Err()
-		case <-time.After(pollInterval):
-		}
+	for isHostReachable(cfg.SSHHost) {
+		time.Sleep(pollInterval)
 	}
 
 	// Turn off the relay
