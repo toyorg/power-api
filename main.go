@@ -113,14 +113,8 @@ type mqttStateMessage struct {
 }
 
 // isPrinterFinished checks if the printer has finished printing.
-func isPrinterFinished(ctx context.Context, baseURL string) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/printer/objects/query?print_stats", baseURL), nil)
-	if err != nil {
-		return false, err
-	}
-
-	resp, err := http.DefaultClient.Do(req)
+func isPrinterFinished(baseURL string) (bool, error) {
+	resp, err := http.Get(fmt.Sprintf("%s/printer/objects/query?print_stats", baseURL))
 	if err != nil {
 		return false, err
 	}
@@ -136,14 +130,8 @@ func isPrinterFinished(ctx context.Context, baseURL string) (bool, error) {
 }
 
 // getCurrentExtruderTemperature fetches and calculates the average extruder temperature.
-func getCurrentExtruderTemperature(ctx context.Context, baseURL string) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/server/temperature_store", baseURL), nil)
-	if err != nil {
-		return 0, err
-	}
-
-	resp, err := http.DefaultClient.Do(req)
+func getCurrentExtruderTemperature(baseURL string) (int, error) {
+	resp, err := http.Get(fmt.Sprintf("%s/server/temperature_store", baseURL))
 	if err != nil {
 		return 0, err
 	}
@@ -379,13 +367,13 @@ func handlePostPrinterControl(client mqtt.Client, cfg *Config) gin.HandlerFunc {
 func shutdownPrinter(ctx context.Context, client mqtt.Client, cfg *Config) error {
 	// Wait for printer to finish and cool down
 	for {
-		finished, err := isPrinterFinished(ctx, cfg.MoonrakerURL)
+		finished, err := isPrinterFinished(cfg.MoonrakerURL)
 		if err != nil {
 			log.Printf("error checking printer status: %v", err)
 			continue
 		}
 
-		temp, err := getCurrentExtruderTemperature(ctx, cfg.MoonrakerURL)
+		temp, err := getCurrentExtruderTemperature(cfg.MoonrakerURL)
 		if err != nil {
 			log.Printf("error getting temperature: %v", err)
 			continue
