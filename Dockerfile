@@ -4,6 +4,7 @@ WORKDIR /go/src/app
 COPY go.mod .
 COPY go.sum .
 COPY main.go .
+COPY src ./src
 RUN CGO_ENABLED=0 go install -ldflags "-s -w -extldflags '-static'" -tags timetzdata
 
 FROM scratch
