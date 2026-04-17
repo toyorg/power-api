@@ -1,104 +1,125 @@
 # 3D Printer Power Control API
 
-A Go-based REST API for controlling a 3D printer's power state through MQTT and SSH. This API provides endpoints to check and control the power state of a 3D printer, including safe shutdown procedures that consider extruder temperature.
+REST API in Go for controlling a 3D printer power relay through MQTT, with a safe power-off flow coordinated with Moonraker and SSH.
 
-## Features
+## Current behavior (from code)
 
-- Get current printer power state
-- Control printer power (ON/OFF)
-- Safe shutdown procedure with temperature monitoring
-- MQTT integration with Zigbee2MQTT
-- SSH-based shutdown commands
-- Automatic MQTT reconnection handling
+- HTTP server listens on `:8000`
+- Endpoints:
+    - `GET /api/3d-printer`
+    - `POST /api/3d-printer`
+- MQTT topics are currently hardcoded:
+    - read state from `zigbee2mqtt/R`
+    - publish commands to `zigbee2mqtt/R/set`
+- `POST OFF` is a **blocking** flow (waits until print is done and hotend cools down)
 
 ## Prerequisites
 
-- Go 1.x
-- MQTT broker (e.g., Mosquitto)
-- SSH access to the printer host
-- Zigbee2MQTT setup
-- Moonraker instance running
+- Go `1.25+` (module is set to `go 1.25.0`)
+- Reachable MQTT broker on port `1883`
+- SSH access to printer host (password auth)
+- Moonraker API reachable by this service
 
-## Environment Variables
+## Environment variables
 
-The following environment variables need to be set:
+The app loads variables from:
+
+1. `.env` in project root
+2. `/root/power-api/.env` (useful for deployments)
+3. process environment
+
+Use lowercase keys exactly as below:
 
 ```env
-mqtt_host=<MQTT broker hostname>
-mqtt_user=<MQTT username>
-mqtt_pass=<MQTT password>
-ssh_host=<SSH host address>
-ssh_user=<SSH username>
-ssh_pass=<SSH password>
-moonraker_url=<Moonraker API URL>
-threshold_temp=<turn off temperature threshold>
+mqtt_host=
+mqtt_user=
+mqtt_pass=
+ssh_host=
+ssh_user=
+ssh_pass=
+moonraker_url=
+threshold_temp=
 ```
 
-## Installation
+Notes:
 
-1. Clone the repository
-2. Install dependencies:
-```bash
-go mod download
-```
-3. Build the application:
-```bash
-go build -o power-api
-```
+- `threshold_temp` defaults to `49` when missing/invalid
+- no strict startup validation is done for empty values, so wrong/missing config will usually fail at runtime (MQTT/HTTP/SSH operations)
 
-## Usage
+## Local run
 
-### Running the Server
+1. Prepare env file:
 
 ```bash
-./power-api
+cp template.env .env
 ```
 
-The server will start on port 8000.
+2. Fill `.env` with your values.
 
-### API Endpoints
+3. Run:
 
-#### GET /api/3d-printer
-Returns the current power state of the 3D printer.
+```bash
+go run .
+```
 
-Response:
+The service starts on `http://localhost:8000`.
+
+## Build
+
+```bash
+go build -o power-api .
+```
+
+## API
+
+### `GET /api/3d-printer`
+
+Returns current relay state from MQTT.
+
+Example response:
+
 ```json
 {
     "state": "ON"
 }
 ```
 
-#### POST /api/3d-printer
-Controls the power state of the 3D printer.
+### `POST /api/3d-printer`
 
 Request body:
+
 ```json
 {
     "state": "ON"
 }
 ```
 
-Supported states:
-- `ON`: Powers on the printer
-- `OFF`: Initiates safe shutdown procedure
+Allowed values:
 
-## Safe Shutdown Procedure
+- `ON` – immediately publishes MQTT `ON`
+- `OFF` – starts safe shutdown flow:
+    1. poll Moonraker print state (`standby` or `complete` required)
+    2. poll Moonraker temperature store and compute average of recent extruder readings
+    3. wait until average temp is below `threshold_temp`
+    4. execute SSH command `/sbin/shutdown 0`
+    5. wait until host no longer responds to ping
+    6. publish MQTT `OFF`
 
-When powering off the printer, the API:
-1. Checks if the extruder temperature is below 50°C
-2. Executes shutdown command via SSH
-3. Monitors host availability
-4. Turns off the power relay
+## Moonraker endpoints used
 
-## Dependencies
+- `{moonraker_url}/printer/objects/query?print_stats`
+- `{moonraker_url}/server/temperature_store`
 
-- github.com/eclipse/paho.mqtt.golang
-- github.com/gin-gonic/gin
-- golang.org/x/crypto/ssh
+## Docker image (current `Dockerfile`)
 
-## Error Handling
+- multi-stage build
+- final image is `scratch`
+- binary entrypoint is `/power-api`
 
-- MQTT connection failures with automatic reconnection
-- SSH command execution errors
-- API request timeouts
-- Invalid state requests
+If you run in a container, pass env vars explicitly (or mount a file at `/root/power-api/.env` if your runtime allows it).
+
+## Operational notes
+
+- MQTT client uses auto-reconnect
+- API request for `POST OFF` can be long-running due to cooldown and host shutdown waiting
+- app runs Gin in `release` mode
