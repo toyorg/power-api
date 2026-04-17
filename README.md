@@ -70,6 +70,44 @@ The service starts on `http://localhost:8000`.
 go build -o power-api .
 ```
 
+## Tests
+
+Tests are organized in the dedicated `tests/` folder and split by source responsibility:
+
+- `tests/config_test.go`
+- `tests/moonraker_test.go`
+- `tests/mqtt_test.go`
+- `tests/handlers_test.go`
+- `tests/shutdown_test.go`
+- `tests/helpers_test.go`
+
+Run all tests:
+
+```bash
+go test ./...
+```
+
+## Code coverage
+
+Generate and print coverage summary:
+
+```bash
+make coverage
+```
+
+This runs tests from `./tests` and measures coverage for `./src/...`.
+
+Generate HTML coverage report:
+
+```bash
+make coverage-html
+```
+
+This creates:
+
+- `coverage.out` (profile)
+- `coverage.html` (visual report)
+
 ## API
 
 ### `GET /api/3d-printer`
