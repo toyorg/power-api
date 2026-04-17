@@ -4,5 +4,14 @@
     "config:recommended",
     "group:allNonMajor",
     ":disableRateLimiting"
+  ],
+  "regexManagers": [
+    {
+      "fileMatch": ["^go\\.mod$"],
+      "matchStrings": ["^go\\s+v?(?<currentValue>[0-9]+(?:\\.[0-9]+)*)"],
+      "datasourceTemplate": "github-tags",
+      "depNameTemplate": "golang/go",
+      "versioningTemplate": "semver"
+    }
   ]
 }
