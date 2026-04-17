@@ -336,7 +336,7 @@ func handlePostPrinterControl(client mqtt.Client, cfg *Config) gin.HandlerFunc {
 			c.JSON(http.StatusOK, StateResponse{State: "ON"})
 
 		case "OFF":
-			if err := shutdownPrinter(client, cfg); err != nil {
+			if err := shutdownPrinter(cfg, defaultShutdownDeps(client)); err != nil {
 				log.Printf("shutdown error: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -349,18 +349,51 @@ func handlePostPrinterControl(client mqtt.Client, cfg *Config) gin.HandlerFunc {
 	}
 }
 
-func shutdownPrinter(client mqtt.Client, cfg *Config) error {
+type shutdownDeps struct {
+	isPrinterFinished           func(baseURL string) (bool, error)
+	getCurrentExtruderTemp     func(baseURL string) (int, error)
+	sendSSHCommand             func(host, user, pass, command string) error
+	isHostReachable            func(host string) bool
+	publishMQTTState           func(topic, state string) error
+	sleep                      func(time.Duration)
+	pollInterval               time.Duration
+}
+
+func defaultShutdownDeps(client mqtt.Client) shutdownDeps {
+	return shutdownDeps{
+		isPrinterFinished:       isPrinterFinished,
+		getCurrentExtruderTemp: getCurrentExtruderTemperature,
+		sendSSHCommand:         sendSSHCommand,
+		isHostReachable:        isHostReachable,
+		publishMQTTState: func(topic, state string) error {
+			return publishMQTTState(client, topic, state)
+		},
+		sleep:        time.Sleep,
+		pollInterval: pollInterval,
+	}
+}
+
+func shutdownPrinter(cfg *Config, deps shutdownDeps) error {
+	if deps.pollInterval <= 0 {
+		deps.pollInterval = pollInterval
+	}
+	if deps.sleep == nil {
+		deps.sleep = time.Sleep
+	}
+
 	// Wait for printer to finish and cool down
 	for {
-		finished, err := isPrinterFinished(cfg.MoonrakerURL)
+		finished, err := deps.isPrinterFinished(cfg.MoonrakerURL)
 		if err != nil {
 			log.Printf("error checking printer status: %v", err)
+			deps.sleep(deps.pollInterval)
 			continue
 		}
 
-		temp, err := getCurrentExtruderTemperature(cfg.MoonrakerURL)
+		temp, err := deps.getCurrentExtruderTemp(cfg.MoonrakerURL)
 		if err != nil {
 			log.Printf("error getting temperature: %v", err)
+			deps.sleep(deps.pollInterval)
 			continue
 		}
 
@@ -369,21 +402,21 @@ func shutdownPrinter(client mqtt.Client, cfg *Config) error {
 		if finished && temp < cfg.ThresholdTemp {
 			break
 		}
-		time.Sleep(pollInterval)
+		deps.sleep(deps.pollInterval)
 	}
 
 	// Shutdown the remote host
-	if err := sendSSHCommand(cfg.SSHHost, cfg.SSHUser, cfg.SSHPass, "/sbin/shutdown 0"); err != nil {
+	if err := deps.sendSSHCommand(cfg.SSHHost, cfg.SSHUser, cfg.SSHPass, "/sbin/shutdown 0"); err != nil {
 		log.Printf("failed to send shutdown command: %v", err)
 	}
 
 	// Wait for host to go offline
-	for isHostReachable(cfg.SSHHost) {
-		time.Sleep(pollInterval)
+	for deps.isHostReachable(cfg.SSHHost) {
+		deps.sleep(deps.pollInterval)
 	}
 
 	// Turn off the relay
-	if err := publishMQTTState(client, "zigbee2mqtt/R/set", "OFF"); err != nil {
+	if err := deps.publishMQTTState("zigbee2mqtt/R/set", "OFF"); err != nil {
 		return fmt.Errorf("failed to publish OFF state: %w", err)
 	}
 
