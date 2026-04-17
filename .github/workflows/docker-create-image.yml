@@ -1,8 +1,9 @@
-name: Docker
+name: Docker Create Image
 
 on:
   push:
     branches: ["main"]
+    paths: ["main.go", "go.mod", "go.sum", "Dockerfile"]
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
