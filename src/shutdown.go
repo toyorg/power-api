@@ -45,7 +45,7 @@ var dialSSH sshDialFunc = func(network, addr string, config *ssh.ClientConfig) (
 type shutdownDeps struct {
 	isPrinterFinished      func(baseURL string) (bool, error)
 	getCurrentExtruderTemp func(baseURL string) (int, error)
-	sendSSHCommand         func(host, user, pass, command string) error
+	sendSSHCommand         func(host, user, pass, hostPublicKey, command string) error
 	isHostReachable        func(host string) bool
 	publishMQTTState       func(topic, state string) error
 	sleep                  func(time.Duration)
@@ -97,8 +97,8 @@ func shutdownPrinter(cfg *Config, deps shutdownDeps) error {
 		deps.sleep(deps.pollInterval)
 	}
 
-	if err := deps.sendSSHCommand(cfg.SSHHost, cfg.SSHUser, cfg.SSHPass, "/sbin/shutdown 0"); err != nil {
-		log.Printf("failed to send shutdown command: %v", err)
+	if err := deps.sendSSHCommand(cfg.SSHHost, cfg.SSHUser, cfg.SSHPass, cfg.SSHHostPubKey, "/sbin/shutdown 0"); err != nil {
+		return fmt.Errorf("failed to send shutdown command: %w", err)
 	}
 
 	for deps.isHostReachable(cfg.SSHHost) {
@@ -113,15 +113,21 @@ func shutdownPrinter(cfg *Config, deps shutdownDeps) error {
 }
 
 // sendSSHCommand executes a command on a remote SSH host.
-func sendSSHCommand(host, user, pass, command string) error {
-	return sendSSHCommandWithDial(host, user, pass, command, dialSSH)
+func sendSSHCommand(host, user, pass, hostPublicKey, command string) error {
+	return sendSSHCommandWithDial(host, user, pass, hostPublicKey, command, dialSSH)
 }
 
-func sendSSHCommandWithDial(host, user, pass, command string, dialFn sshDialFunc) error {
+func sendSSHCommandWithDial(host, user, pass, hostPublicKey, command string, dialFn sshDialFunc) error {
+	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(hostPublicKey))
+
+	if err != nil {
+		return fmt.Errorf("failed to parse SSH host public key: %w", err)
+	}
+
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.Password(pass)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: ssh.FixedHostKey(pubKey),
 	}
 
 	client, err := dialFn("tcp", fmt.Sprintf("%s:22", host), config)

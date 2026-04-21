@@ -18,6 +18,7 @@ type Config struct {
 	SSHHost       string
 	SSHUser       string
 	SSHPass       string
+	SSHHostPubKey string
 	MoonrakerURL  string
 	ThresholdTemp int
 }

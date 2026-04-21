@@ -17,7 +17,7 @@ const (
 type ShutdownDeps struct {
 	IsPrinterFinished      func(baseURL string) (bool, error)
 	GetCurrentExtruderTemp func(baseURL string) (int, error)
-	SendSSHCommand         func(host, user, pass, command string) error
+	SendSSHCommand         func(host, user, pass, hostPublicKey, command string) error
 	IsHostReachable        func(host string) bool
 	PublishMQTTState       func(topic, state string) error
 	Sleep                  func(time.Duration)
@@ -111,12 +111,12 @@ func DefaultShutdownDeps(client mqtt.Client) ShutdownDeps {
 	}
 }
 
-func SendSSHCommand(host, user, pass, command string) error {
-	return sendSSHCommand(host, user, pass, command)
+func SendSSHCommand(host, user, pass, hostPublicKey, command string) error {
+	return sendSSHCommand(host, user, pass, hostPublicKey, command)
 }
 
-func SendSSHCommandWithDial(host, user, pass, command string, dialFn func(network, addr string, config *ssh.ClientConfig) (SSHClient, error)) error {
-	return sendSSHCommandWithDial(host, user, pass, command, dialFn)
+func SendSSHCommandWithDial(host, user, pass, hostPublicKey, command string, dialFn func(network, addr string, config *ssh.ClientConfig) (SSHClient, error)) error {
+	return sendSSHCommandWithDial(host, user, pass, hostPublicKey, command, dialFn)
 }
 
 func IsHostReachable(host string) bool {
