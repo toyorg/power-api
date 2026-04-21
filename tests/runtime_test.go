@@ -1,15 +1,31 @@
 package tests
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"strings"
 	"testing"
 
+	powerapi "power-api/src"
+
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/ssh"
-	powerapi "power-api/src"
 )
+
+func mustValidSSHAuthorizedKey(t *testing.T) string {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate ed25519 key: %v", err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatalf("failed to convert public key for ssh: %v", err)
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
+}
 
 type fakeSSHSession struct {
 	runErr error
@@ -24,9 +40,9 @@ func (s *fakeSSHSession) Run(string) error {
 func (s *fakeSSHSession) Close() error { return nil }
 
 type fakeSSHClient struct {
-	session      powerapi.SSHSession
+	session       powerapi.SSHSession
 	newSessionErr error
-	newCalls     int
+	newCalls      int
 }
 
 func (c *fakeSSHClient) NewSession() (powerapi.SSHSession, error) {
@@ -213,14 +229,14 @@ func TestRunWithDeps_SuccessAndDisconnect(t *testing.T) {
 }
 
 func TestSendSSHCommand_InvalidHostReturnsError(t *testing.T) {
-	err := powerapi.SendSSHCommand("127.0.0.1", "root", "secret", "echo ok")
+	err := powerapi.SendSSHCommand("127.0.0.1", "root", "secret", mustValidSSHAuthorizedKey(t), "echo ok")
 	if err == nil {
 		t.Fatal("expected ssh error on localhost:22, got nil")
 	}
 }
 
 func TestSendSSHCommandWithDial_DialError(t *testing.T) {
-	err := powerapi.SendSSHCommandWithDial("printer-host", "root", "secret", "echo ok", func(string, string, *ssh.ClientConfig) (powerapi.SSHClient, error) {
+	err := powerapi.SendSSHCommandWithDial("printer-host", "root", "secret", mustValidSSHAuthorizedKey(t), "echo ok", func(string, string, *ssh.ClientConfig) (powerapi.SSHClient, error) {
 		return nil, errors.New("dial failed")
 	})
 	if err == nil {
@@ -231,8 +247,21 @@ func TestSendSSHCommandWithDial_DialError(t *testing.T) {
 	}
 }
 
+func TestSendSSHCommandWithDial_InvalidHostKey(t *testing.T) {
+	err := powerapi.SendSSHCommandWithDial("printer-host", "root", "secret", "invalid-key", "echo ok", func(string, string, *ssh.ClientConfig) (powerapi.SSHClient, error) {
+		t.Fatal("dial should not be called when host key is invalid")
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("expected host key parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to parse SSH host public key") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestSendSSHCommandWithDial_NewSessionError(t *testing.T) {
-	err := powerapi.SendSSHCommandWithDial("printer-host", "root", "secret", "echo ok", func(string, string, *ssh.ClientConfig) (powerapi.SSHClient, error) {
+	err := powerapi.SendSSHCommandWithDial("printer-host", "root", "secret", mustValidSSHAuthorizedKey(t), "echo ok", func(string, string, *ssh.ClientConfig) (powerapi.SSHClient, error) {
 		return &fakeSSHClient{newSessionErr: errors.New("session failed")}, nil
 	})
 	if err == nil {
@@ -247,7 +276,7 @@ func TestSendSSHCommandWithDial_SuccessEvenWhenRunErrors(t *testing.T) {
 	s := &fakeSSHSession{runErr: errors.New("remote failed")}
 	c := &fakeSSHClient{session: s}
 
-	err := powerapi.SendSSHCommandWithDial("printer-host", "root", "secret", "echo ok", func(string, string, *ssh.ClientConfig) (powerapi.SSHClient, error) {
+	err := powerapi.SendSSHCommandWithDial("printer-host", "root", "secret", mustValidSSHAuthorizedKey(t), "echo ok", func(string, string, *ssh.ClientConfig) (powerapi.SSHClient, error) {
 		return c, nil
 	})
 	if err != nil {

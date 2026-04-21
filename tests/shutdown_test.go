@@ -15,6 +15,7 @@ func TestShutdownPrinter_ResponsesReturnedNow(t *testing.T) {
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
+		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
 		ThresholdTemp: powerapi.DefaultThresholdTemp,
 	}
 
@@ -41,10 +42,13 @@ func TestShutdownPrinter_ResponsesReturnedNow(t *testing.T) {
 			}
 			return cfg.ThresholdTemp - 1, nil
 		},
-		SendSSHCommand: func(host, user, pass, command string) error {
+		SendSSHCommand: func(host, user, pass, hostPublicKey, command string) error {
 			sshCalls++
 			if host != cfg.SSHHost || user != cfg.SSHUser || pass != cfg.SSHPass {
 				t.Fatalf("unexpected ssh args: host=%s user=%s pass=%s", host, user, pass)
+			}
+			if hostPublicKey != cfg.SSHHostPubKey {
+				t.Fatalf("unexpected ssh host key: %s", hostPublicKey)
 			}
 			if command != "/sbin/shutdown 0" {
 				t.Fatalf("unexpected ssh command: %s", command)
@@ -97,6 +101,7 @@ func TestShutdownPrinter_ResponsesReturnedAfter30Seconds(t *testing.T) {
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
+		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
 		ThresholdTemp: powerapi.DefaultThresholdTemp,
 	}
 
@@ -124,7 +129,7 @@ func TestShutdownPrinter_ResponsesReturnedAfter30Seconds(t *testing.T) {
 			}
 			return cfg.ThresholdTemp - 1, nil
 		},
-		SendSSHCommand: func(host, user, pass, command string) error {
+		SendSSHCommand: func(host, user, pass, hostPublicKey, command string) error {
 			sshCalls++
 			return nil
 		},
@@ -172,6 +177,7 @@ func TestShutdownPrinter_ReturnsErrorWhenPublishFails(t *testing.T) {
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
+		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
 		ThresholdTemp: powerapi.DefaultThresholdTemp,
 	}
 
@@ -180,7 +186,7 @@ func TestShutdownPrinter_ReturnsErrorWhenPublishFails(t *testing.T) {
 		GetCurrentExtruderTemp: func(string) (int, error) {
 			return cfg.ThresholdTemp - 1, nil
 		},
-		SendSSHCommand:   func(string, string, string, string) error { return nil },
+		SendSSHCommand:   func(string, string, string, string, string) error { return nil },
 		IsHostReachable:  func(string) bool { return false },
 		PublishMQTTState: func(string, string) error { return errors.New("mqtt down") },
 		Sleep:            func(time.Duration) {},
@@ -202,6 +208,7 @@ func TestShutdownPrinter_DefaultsSleepAndPollInterval(t *testing.T) {
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
+		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
 		ThresholdTemp: powerapi.DefaultThresholdTemp,
 	}
 
@@ -210,7 +217,7 @@ func TestShutdownPrinter_DefaultsSleepAndPollInterval(t *testing.T) {
 		GetCurrentExtruderTemp: func(string) (int, error) {
 			return cfg.ThresholdTemp - 1, nil
 		},
-		SendSSHCommand: func(string, string, string, string) error { return nil },
+		SendSSHCommand: func(string, string, string, string, string) error { return nil },
 		IsHostReachable: func(string) bool {
 			return false
 		},
@@ -233,6 +240,7 @@ func TestShutdownPrinter_ContinuesWhenSSHCommandFails(t *testing.T) {
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
+		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
 		ThresholdTemp: powerapi.DefaultThresholdTemp,
 	}
 
@@ -241,7 +249,7 @@ func TestShutdownPrinter_ContinuesWhenSSHCommandFails(t *testing.T) {
 	deps := powerapi.ShutdownDeps{
 		IsPrinterFinished:      func(string) (bool, error) { return true, nil },
 		GetCurrentExtruderTemp: func(string) (int, error) { return cfg.ThresholdTemp - 1, nil },
-		SendSSHCommand:         func(string, string, string, string) error { return errors.New("ssh failure") },
+		SendSSHCommand:         func(string, string, string, string, string) error { return errors.New("ssh failure") },
 		IsHostReachable:        func(string) bool { return false },
 		PublishMQTTState: func(string, string) error {
 			publishCalls++
@@ -266,6 +274,7 @@ func TestShutdownPrinter_RetriesWhenTempReadFails(t *testing.T) {
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
+		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
 		ThresholdTemp: powerapi.DefaultThresholdTemp,
 	}
 
@@ -283,7 +292,7 @@ func TestShutdownPrinter_RetriesWhenTempReadFails(t *testing.T) {
 			}
 			return cfg.ThresholdTemp - 1, nil
 		},
-		SendSSHCommand:   func(string, string, string, string) error { return nil },
+		SendSSHCommand:   func(string, string, string, string, string) error { return nil },
 		IsHostReachable:  func(string) bool { return false },
 		PublishMQTTState: func(string, string) error { return nil },
 		Sleep: func(time.Duration) {
@@ -310,6 +319,7 @@ func TestShutdownPrinter_WaitsUntilHostBecomesUnreachable(t *testing.T) {
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
+		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
 		ThresholdTemp: powerapi.DefaultThresholdTemp,
 	}
 
@@ -321,7 +331,7 @@ func TestShutdownPrinter_WaitsUntilHostBecomesUnreachable(t *testing.T) {
 	deps := powerapi.ShutdownDeps{
 		IsPrinterFinished:      func(string) (bool, error) { return true, nil },
 		GetCurrentExtruderTemp: func(string) (int, error) { return cfg.ThresholdTemp - 1, nil },
-		SendSSHCommand:         func(string, string, string, string) error { return nil },
+		SendSSHCommand:         func(string, string, string, string, string) error { return nil },
 		IsHostReachable: func(string) bool {
 			reachableChecks++
 			return reachableChecks < 3

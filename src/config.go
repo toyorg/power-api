@@ -19,6 +19,7 @@ func loadConfig() (*Config, error) {
 		SSHHost:       getenvString("ssh_host", ""),
 		SSHUser:       getenvString("ssh_user", ""),
 		SSHPass:       getenvString("ssh_pass", ""),
+		SSHHostPubKey: getenvString("ssh_host_public_key", ""),
 		MoonrakerURL:  getenvString("moonraker_url", ""),
 		ThresholdTemp: getenvInt("threshold_temp", defaultThresholdTemp),
 	}, nil

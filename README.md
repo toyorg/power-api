@@ -37,6 +37,7 @@ mqtt_pass=
 ssh_host=
 ssh_user=
 ssh_pass=
+ssh_host_public_key=
 moonraker_url=
 threshold_temp=
 ```
@@ -44,6 +45,7 @@ threshold_temp=
 Notes:
 
 - `threshold_temp` defaults to `49` when missing/invalid
+- `ssh_host_public_key` should contain the full OpenSSH public key line for the printer host (for example `ecdsa-sha2-nistp256 AAAA...`)
 - no strict startup validation is done for empty values, so wrong/missing config will usually fail at runtime (MQTT/HTTP/SSH operations)
 
 ## Local run
