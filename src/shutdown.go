@@ -98,7 +98,7 @@ func shutdownPrinter(cfg *Config, deps shutdownDeps) error {
 	}
 
 	if err := deps.sendSSHCommand(cfg.SSHHost, cfg.SSHUser, cfg.SSHPass, cfg.SSHHostPubKey, "/sbin/shutdown 0"); err != nil {
-		return fmt.Errorf("failed to send shutdown command: %w", err)
+		log.Printf("failed to send shutdown command: %v", err)
 	}
 
 	for deps.isHostReachable(cfg.SSHHost) {
