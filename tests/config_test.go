@@ -48,7 +48,7 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.MQTTHost != "broker.local" || cfg.MQTTUser != "user" || cfg.MQTTPass != "pass" {
 		t.Fatalf("unexpected MQTT config: %+v", cfg)
 	}
-	if cfg.SSHHost != "ssh.local" || cfg.SSHUser != "root" || cfg.SSHPass != "secret" || cfg.SSHHostPubKey == "" {
+	if cfg.SSHHost != "ssh.local" || cfg.SSHUser != "root" || cfg.SSHPass != "secret" || cfg.SSHHostPubKey != "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local" {
 		t.Fatalf("unexpected SSH config: %+v", cfg)
 	}
 	if cfg.MoonrakerURL != "http://moonraker.local" {
