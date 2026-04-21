@@ -6,8 +6,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	powerapi "power-api/src"
@@ -168,5 +171,75 @@ func TestAPI_PostPrinterState_OFF_ShutdownError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected status 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPI_PostPrinterState_OFF_OnlyOnePendingShutdown(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	client := &fakeMQTTClient{}
+	router := gin.New()
+
+	started := make(chan struct{})
+	finish := make(chan struct{})
+	var startedOnce sync.Once
+	var shutdownCalls atomic.Int32
+
+	router.POST("/api/3d-printer", powerapi.NewPostPrinterControlHandlerWithShutdown(client, &powerapi.Config{}, func(_ *powerapi.Config, _ powerapi.ShutdownDeps) error {
+		shutdownCalls.Add(1)
+		startedOnce.Do(func() { close(started) })
+		<-finish
+		return nil
+	}))
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/api/3d-printer", bytes.NewBufferString(`{"state":"OFF"}`))
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstRec := httptest.NewRecorder()
+
+	firstDone := make(chan struct{})
+	go func() {
+		router.ServeHTTP(firstRec, firstReq)
+		close(firstDone)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first shutdown did not start in time")
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/api/3d-printer", bytes.NewBufferString(`{"state":"ON"}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondRec := httptest.NewRecorder()
+	router.ServeHTTP(secondRec, secondReq)
+
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("expected second request status 200, got %d body=%s", secondRec.Code, secondRec.Body.String())
+	}
+	if got := strings.TrimSpace(secondRec.Body.String()); got != `{"state":"ON"}` {
+		t.Fatalf("unexpected second response body: %s", got)
+	}
+
+	if got := shutdownCalls.Load(); got != 1 {
+		t.Fatalf("expected one shutdown call while pending, got %d", got)
+	}
+
+	close(finish)
+
+	select {
+	case <-firstDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first shutdown request did not complete in time")
+	}
+
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("expected first request status 200, got %d body=%s", firstRec.Code, firstRec.Body.String())
+	}
+	if got := strings.TrimSpace(firstRec.Body.String()); got != `{"state":"OFF"}` {
+		t.Fatalf("unexpected first response body: %s", got)
+	}
+
+	if got := shutdownCalls.Load(); got != 1 {
+		t.Fatalf("expected total shutdown call count to stay at 1, got %d", got)
 	}
 }

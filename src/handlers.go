@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"sync/atomic"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gin-gonic/gin"
@@ -29,6 +30,8 @@ func handlePostPrinterControl(client mqtt.Client, cfg *Config) gin.HandlerFunc {
 }
 
 func handlePostPrinterControlWithShutdown(client mqtt.Client, cfg *Config, shutdownFn func(*Config, shutdownDeps) error) gin.HandlerFunc {
+	var shutdownInProgress atomic.Bool
+
 	return func(c *gin.Context) {
 		var req StateRequest
 		if err := c.BindJSON(&req); err != nil {
@@ -46,11 +49,19 @@ func handlePostPrinterControlWithShutdown(client mqtt.Client, cfg *Config, shutd
 			c.JSON(http.StatusOK, StateResponse{State: "ON"})
 
 		case "OFF":
+			if !shutdownInProgress.CompareAndSwap(false, true) {
+				c.JSON(http.StatusOK, StateResponse{State: "ON"})
+				return
+			}
+
 			if err := shutdownFn(cfg, defaultShutdownDeps(client)); err != nil {
 				log.Printf("shutdown error: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+
+			defer shutdownInProgress.Store(false)
+
 			c.JSON(http.StatusOK, StateResponse{State: "OFF"})
 
 		default:
