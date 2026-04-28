@@ -77,12 +77,15 @@ func newMQTTClientWithFactory(host, user, pass string, newClientFn func(*mqtt.Cl
 		SetReconnectingHandler(onMQTTReconnecting)
 
 	client := newClientFn(opts)
-	token := client.Connect()
-	if !token.WaitTimeout(mqttConnectTimeout) {
-		return nil, fmt.Errorf("MQTT connection timeout")
-	}
-	if token.Error() != nil {
-		return nil, fmt.Errorf("failed to connect to MQTT broker: %w", token.Error())
+
+	// Retry connecting indefinitely until successful
+	for {
+		token := client.Connect()
+		if token.WaitTimeout(mqttConnectTimeout) && token.Error() == nil {
+			break // Connected successfully
+		}
+		log.Printf("Failed to connect to MQTT broker, retrying in 5 seconds...")
+		time.Sleep(5 * time.Second)
 	}
 
 	return client, nil
