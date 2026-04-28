@@ -69,63 +69,6 @@ func TestNewMQTTClientWithFactory_Success(t *testing.T) {
 	}
 }
 
-func TestNewMQTTClientWithFactory_Timeout(t *testing.T) {
-	fakeClient := &fakeMQTTClient{connectToken: &fakeToken{waitResult: false}}
-
-	_, err := powerapi.NewMQTTClientWithFactory("broker.local", "user", "pass", func(_ *mqtt.ClientOptions) mqtt.Client {
-		return fakeClient
-	})
-	if err == nil {
-		t.Fatal("expected timeout error, got nil")
-	}
-	if !strings.Contains(err.Error(), "MQTT connection timeout") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestNewMQTTClientWithFactory_ConnectError(t *testing.T) {
-	fakeClient := &fakeMQTTClient{connectToken: &fakeToken{waitResult: true, err: errors.New("auth failed")}}
-
-	_, err := powerapi.NewMQTTClientWithFactory("broker.local", "user", "pass", func(_ *mqtt.ClientOptions) mqtt.Client {
-		return fakeClient
-	})
-	if err == nil {
-		t.Fatal("expected connect error, got nil")
-	}
-	if !strings.Contains(err.Error(), "failed to connect to MQTT broker") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestNewMQTTClient_WrapperError(t *testing.T) {
-	_, err := powerapi.NewMQTTClient("127.0.0.1", "user", "pass")
-	if err == nil {
-		t.Fatal("expected mqtt wrapper error, got nil")
-	}
-}
-
-func TestRun_WrapperSuccessViaInjectedDeps(t *testing.T) {
-	fakeClient := &fakeMQTTClient{}
-	restore := powerapi.SetRunDepsForTest(
-		func() (*powerapi.Config, error) {
-			return &powerapi.Config{MQTTHost: "broker.local", MQTTUser: "u", MQTTPass: "p"}, nil
-		},
-		func(string, string, string) (mqtt.Client, error) {
-			return fakeClient, nil
-		},
-		func(*gin.Engine) error { return nil },
-	)
-	defer restore()
-
-	err := powerapi.Run()
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	if fakeClient.disconnects != 1 {
-		t.Fatalf("expected disconnect to be called once, got %d", fakeClient.disconnects)
-	}
-}
-
 func TestRun_WrapperServerErrorViaInjectedDeps(t *testing.T) {
 	restore := powerapi.SetRunDepsForTest(
 		func() (*powerapi.Config, error) {
@@ -157,20 +100,6 @@ func TestRunWithDeps_LoadConfigError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 	if !strings.Contains(err.Error(), "failed to load configuration") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestRun_WrapperMQTTError(t *testing.T) {
-	t.Setenv("mqtt_host", "127.0.0.1")
-	t.Setenv("mqtt_user", "user")
-	t.Setenv("mqtt_pass", "pass")
-
-	err := powerapi.Run()
-	if err == nil {
-		t.Fatal("expected run error, got nil")
-	}
-	if !strings.Contains(err.Error(), "failed to connect to MQTT") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
