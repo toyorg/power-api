@@ -240,7 +240,7 @@ func TestShutdownPrinter_ContinuesWhenSSHCommandFails(t *testing.T) {
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
-		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
+		SSHHostPubKey: "ecdsa-sha2-nistp256 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake",
 		ThresholdTemp: powerapi.DefaultThresholdTemp,
 	}
 
