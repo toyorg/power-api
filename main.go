@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"power-api/internal/powerapi"
+	powerapi "power-api/src"
 )
 
 func main() {
