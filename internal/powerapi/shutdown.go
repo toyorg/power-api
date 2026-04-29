@@ -3,20 +3,20 @@ package powerapi
 import (
 	"fmt"
 	"log"
-	"os/exec"
+	"net"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"golang.org/x/crypto/ssh"
 )
 
-type SSHSession interface {
+type sshSession interface {
 	Run(cmd string) error
 	Close() error
 }
 
-type SSHClient interface {
-	NewSession() (SSHSession, error)
+type sshClient interface {
+	NewSession() (sshSession, error)
 	Close() error
 }
 
@@ -24,7 +24,7 @@ type sshClientAdapter struct {
 	client *ssh.Client
 }
 
-func (a *sshClientAdapter) NewSession() (SSHSession, error) {
+func (a *sshClientAdapter) NewSession() (sshSession, error) {
 	return a.client.NewSession()
 }
 
@@ -32,9 +32,9 @@ func (a *sshClientAdapter) Close() error {
 	return a.client.Close()
 }
 
-type sshDialFunc func(network, addr string, config *ssh.ClientConfig) (SSHClient, error)
+type sshDialFunc func(network, addr string, config *ssh.ClientConfig) (sshClient, error)
 
-var dialSSH sshDialFunc = func(network, addr string, config *ssh.ClientConfig) (SSHClient, error) {
+var dialSSH sshDialFunc = func(network, addr string, config *ssh.ClientConfig) (sshClient, error) {
 	client, err := ssh.Dial(network, addr, config)
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func shutdownPrinter(cfg *Config, deps shutdownDeps) error {
 		deps.sleep(deps.pollInterval)
 	}
 
-	if err := deps.publishMQTTState("zigbee2mqtt/R/set", "OFF"); err != nil {
+	if err := deps.publishMQTTState(topicPrinterSet, stateOFF); err != nil {
 		return fmt.Errorf("failed to publish OFF state: %w", err)
 	}
 
@@ -119,7 +119,6 @@ func sendSSHCommand(host, user, pass, hostPublicKey, command string) error {
 
 func sendSSHCommandWithDial(host, user, pass, hostPublicKey, command string, dialFn sshDialFunc) error {
 	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(hostPublicKey))
-
 	if err != nil {
 		return fmt.Errorf("failed to parse SSH host public key: %w", err)
 	}
@@ -149,8 +148,12 @@ func sendSSHCommandWithDial(host, user, pass, hostPublicKey, command string, dia
 	return nil
 }
 
-// isHostReachable checks if a host is reachable via ping.
+// isHostReachable checks if a host is reachable via TCP on port 22.
 func isHostReachable(host string) bool {
-	cmd := exec.Command("ping", "-c", "1", host)
-	return cmd.Run() == nil
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, "22"), 5*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

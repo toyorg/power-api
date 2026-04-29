@@ -1,22 +1,20 @@
-package tests
+package powerapi
 
 import (
 	"errors"
 	"strings"
 	"testing"
 	"time"
-
-	powerapi "power-api/src"
 )
 
 func TestShutdownPrinter_ResponsesReturnedNow(t *testing.T) {
-	cfg := &powerapi.Config{
+	cfg := &Config{
 		MoonrakerURL:  "http://moonraker.local",
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
 		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
-		ThresholdTemp: powerapi.DefaultThresholdTemp,
+		ThresholdTemp: defaultThresholdTemp,
 	}
 
 	var (
@@ -27,22 +25,22 @@ func TestShutdownPrinter_ResponsesReturnedNow(t *testing.T) {
 		sleepCalls    int
 	)
 
-	deps := powerapi.ShutdownDeps{
-		IsPrinterFinished: func(baseURL string) (bool, error) {
+	deps := shutdownDeps{
+		isPrinterFinished: func(baseURL string) (bool, error) {
 			finishedCalls++
 			if baseURL != cfg.MoonrakerURL {
 				t.Fatalf("unexpected moonraker URL: %s", baseURL)
 			}
 			return true, nil
 		},
-		GetCurrentExtruderTemp: func(baseURL string) (int, error) {
+		getCurrentExtruderTemp: func(baseURL string) (int, error) {
 			tempCalls++
 			if baseURL != cfg.MoonrakerURL {
 				t.Fatalf("unexpected moonraker URL: %s", baseURL)
 			}
 			return cfg.ThresholdTemp - 1, nil
 		},
-		SendSSHCommand: func(host, user, pass, hostPublicKey, command string) error {
+		sendSSHCommand: func(host, user, pass, hostPublicKey, command string) error {
 			sshCalls++
 			if host != cfg.SSHHost || user != cfg.SSHUser || pass != cfg.SSHPass {
 				t.Fatalf("unexpected ssh args: host=%s user=%s pass=%s", host, user, pass)
@@ -55,26 +53,26 @@ func TestShutdownPrinter_ResponsesReturnedNow(t *testing.T) {
 			}
 			return nil
 		},
-		IsHostReachable: func(host string) bool {
+		isHostReachable: func(host string) bool {
 			if host != cfg.SSHHost {
 				t.Fatalf("unexpected host in reachability check: %s", host)
 			}
 			return false
 		},
-		PublishMQTTState: func(topic, state string) error {
+		publishMQTTState: func(topic, state string) error {
 			publishCalls++
-			if topic != "zigbee2mqtt/R/set" || state != "OFF" {
+			if topic != topicPrinterSet || state != stateOFF {
 				t.Fatalf("unexpected mqtt publish args: topic=%s state=%s", topic, state)
 			}
 			return nil
 		},
-		Sleep: func(time.Duration) {
+		sleep: func(time.Duration) {
 			sleepCalls++
 		},
-		PollInterval: powerapi.PollInterval,
+		pollInterval: pollInterval,
 	}
 
-	if err := powerapi.ShutdownPrinter(cfg, deps); err != nil {
+	if err := shutdownPrinter(cfg, deps); err != nil {
 		t.Fatalf("shutdownPrinter returned error: %v", err)
 	}
 
@@ -96,13 +94,13 @@ func TestShutdownPrinter_ResponsesReturnedNow(t *testing.T) {
 }
 
 func TestShutdownPrinter_ResponsesReturnedAfter30Seconds(t *testing.T) {
-	cfg := &powerapi.Config{
+	cfg := &Config{
 		MoonrakerURL:  "http://moonraker.local",
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
 		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
-		ThresholdTemp: powerapi.DefaultThresholdTemp,
+		ThresholdTemp: defaultThresholdTemp,
 	}
 
 	var (
@@ -114,40 +112,40 @@ func TestShutdownPrinter_ResponsesReturnedAfter30Seconds(t *testing.T) {
 		elapsed      time.Duration
 	)
 
-	deps := powerapi.ShutdownDeps{
-		IsPrinterFinished: func(string) (bool, error) {
+	deps := shutdownDeps{
+		isPrinterFinished: func(string) (bool, error) {
 			statusCalls++
 			if elapsed < 30*time.Second {
 				return false, errors.New("moonraker status not available yet")
 			}
 			return true, nil
 		},
-		GetCurrentExtruderTemp: func(string) (int, error) {
+		getCurrentExtruderTemp: func(string) (int, error) {
 			tempCalls++
 			if elapsed < 30*time.Second {
 				return 0, errors.New("temperature endpoint not available yet")
 			}
 			return cfg.ThresholdTemp - 1, nil
 		},
-		SendSSHCommand: func(host, user, pass, hostPublicKey, command string) error {
+		sendSSHCommand: func(host, user, pass, hostPublicKey, command string) error {
 			sshCalls++
 			return nil
 		},
-		IsHostReachable: func(string) bool {
+		isHostReachable: func(string) bool {
 			return false
 		},
-		PublishMQTTState: func(topic, state string) error {
+		publishMQTTState: func(topic, state string) error {
 			publishCalls++
 			return nil
 		},
-		Sleep: func(d time.Duration) {
+		sleep: func(d time.Duration) {
 			sleepCalls++
 			elapsed += d
 		},
-		PollInterval: powerapi.PollInterval,
+		pollInterval: pollInterval,
 	}
 
-	if err := powerapi.ShutdownPrinter(cfg, deps); err != nil {
+	if err := shutdownPrinter(cfg, deps); err != nil {
 		t.Fatalf("shutdownPrinter returned error: %v", err)
 	}
 
@@ -172,28 +170,26 @@ func TestShutdownPrinter_ResponsesReturnedAfter30Seconds(t *testing.T) {
 }
 
 func TestShutdownPrinter_ReturnsErrorWhenPublishFails(t *testing.T) {
-	cfg := &powerapi.Config{
+	cfg := &Config{
 		MoonrakerURL:  "http://moonraker.local",
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
 		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
-		ThresholdTemp: powerapi.DefaultThresholdTemp,
+		ThresholdTemp: defaultThresholdTemp,
 	}
 
-	deps := powerapi.ShutdownDeps{
-		IsPrinterFinished: func(string) (bool, error) { return true, nil },
-		GetCurrentExtruderTemp: func(string) (int, error) {
-			return cfg.ThresholdTemp - 1, nil
-		},
-		SendSSHCommand:   func(string, string, string, string, string) error { return nil },
-		IsHostReachable:  func(string) bool { return false },
-		PublishMQTTState: func(string, string) error { return errors.New("mqtt down") },
-		Sleep:            func(time.Duration) {},
-		PollInterval:     powerapi.PollInterval,
+	deps := shutdownDeps{
+		isPrinterFinished:      func(string) (bool, error) { return true, nil },
+		getCurrentExtruderTemp: func(string) (int, error) { return cfg.ThresholdTemp - 1, nil },
+		sendSSHCommand:         func(string, string, string, string, string) error { return nil },
+		isHostReachable:        func(string) bool { return false },
+		publishMQTTState:       func(string, string) error { return errors.New("mqtt down") },
+		sleep:                  func(time.Duration) {},
+		pollInterval:           pollInterval,
 	}
 
-	err := powerapi.ShutdownPrinter(cfg, deps)
+	err := shutdownPrinter(cfg, deps)
 	if err == nil {
 		t.Fatal("expected shutdown error, got nil")
 	}
@@ -203,63 +199,57 @@ func TestShutdownPrinter_ReturnsErrorWhenPublishFails(t *testing.T) {
 }
 
 func TestShutdownPrinter_DefaultsSleepAndPollInterval(t *testing.T) {
-	cfg := &powerapi.Config{
+	cfg := &Config{
 		MoonrakerURL:  "http://moonraker.local",
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
 		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
-		ThresholdTemp: powerapi.DefaultThresholdTemp,
+		ThresholdTemp: defaultThresholdTemp,
 	}
 
-	deps := powerapi.ShutdownDeps{
-		IsPrinterFinished: func(string) (bool, error) { return true, nil },
-		GetCurrentExtruderTemp: func(string) (int, error) {
-			return cfg.ThresholdTemp - 1, nil
-		},
-		SendSSHCommand: func(string, string, string, string, string) error { return nil },
-		IsHostReachable: func(string) bool {
-			return false
-		},
-		PublishMQTTState: func(string, string) error {
-			return nil
-		},
-		Sleep:        nil,
-		PollInterval: 0,
+	deps := shutdownDeps{
+		isPrinterFinished:      func(string) (bool, error) { return true, nil },
+		getCurrentExtruderTemp: func(string) (int, error) { return cfg.ThresholdTemp - 1, nil },
+		sendSSHCommand:         func(string, string, string, string, string) error { return nil },
+		isHostReachable:        func(string) bool { return false },
+		publishMQTTState:       func(string, string) error { return nil },
+		sleep:                  nil,
+		pollInterval:           0,
 	}
 
-	err := powerapi.ShutdownPrinter(cfg, deps)
+	err := shutdownPrinter(cfg, deps)
 	if err != nil {
 		t.Fatalf("shutdownPrinter returned error: %v", err)
 	}
 }
 
 func TestShutdownPrinter_ContinuesWhenSSHCommandFails(t *testing.T) {
-	cfg := &powerapi.Config{
+	cfg := &Config{
 		MoonrakerURL:  "http://moonraker.local",
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
 		SSHHostPubKey: "ecdsa-sha2-nistp256 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake",
-		ThresholdTemp: powerapi.DefaultThresholdTemp,
+		ThresholdTemp: defaultThresholdTemp,
 	}
 
 	var publishCalls int
 
-	deps := powerapi.ShutdownDeps{
-		IsPrinterFinished:      func(string) (bool, error) { return true, nil },
-		GetCurrentExtruderTemp: func(string) (int, error) { return cfg.ThresholdTemp - 1, nil },
-		SendSSHCommand:         func(string, string, string, string, string) error { return errors.New("ssh failure") },
-		IsHostReachable:        func(string) bool { return false },
-		PublishMQTTState: func(string, string) error {
+	deps := shutdownDeps{
+		isPrinterFinished:      func(string) (bool, error) { return true, nil },
+		getCurrentExtruderTemp: func(string) (int, error) { return cfg.ThresholdTemp - 1, nil },
+		sendSSHCommand:         func(string, string, string, string, string) error { return errors.New("ssh failure") },
+		isHostReachable:        func(string) bool { return false },
+		publishMQTTState: func(string, string) error {
 			publishCalls++
 			return nil
 		},
-		Sleep:        func(time.Duration) {},
-		PollInterval: powerapi.PollInterval,
+		sleep:        func(time.Duration) {},
+		pollInterval: pollInterval,
 	}
 
-	err := powerapi.ShutdownPrinter(cfg, deps)
+	err := shutdownPrinter(cfg, deps)
 	if err != nil {
 		t.Fatalf("shutdownPrinter returned error: %v", err)
 	}
@@ -269,13 +259,13 @@ func TestShutdownPrinter_ContinuesWhenSSHCommandFails(t *testing.T) {
 }
 
 func TestShutdownPrinter_RetriesWhenTempReadFails(t *testing.T) {
-	cfg := &powerapi.Config{
+	cfg := &Config{
 		MoonrakerURL:  "http://moonraker.local",
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
 		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
-		ThresholdTemp: powerapi.DefaultThresholdTemp,
+		ThresholdTemp: defaultThresholdTemp,
 	}
 
 	var (
@@ -283,25 +273,25 @@ func TestShutdownPrinter_RetriesWhenTempReadFails(t *testing.T) {
 		sleepCalls int
 	)
 
-	deps := powerapi.ShutdownDeps{
-		IsPrinterFinished: func(string) (bool, error) { return true, nil },
-		GetCurrentExtruderTemp: func(string) (int, error) {
+	deps := shutdownDeps{
+		isPrinterFinished: func(string) (bool, error) { return true, nil },
+		getCurrentExtruderTemp: func(string) (int, error) {
 			tempCalls++
 			if tempCalls == 1 {
 				return 0, errors.New("temp endpoint flaky")
 			}
 			return cfg.ThresholdTemp - 1, nil
 		},
-		SendSSHCommand:   func(string, string, string, string, string) error { return nil },
-		IsHostReachable:  func(string) bool { return false },
-		PublishMQTTState: func(string, string) error { return nil },
-		Sleep: func(time.Duration) {
+		sendSSHCommand:   func(string, string, string, string, string) error { return nil },
+		isHostReachable:  func(string) bool { return false },
+		publishMQTTState: func(string, string) error { return nil },
+		sleep: func(time.Duration) {
 			sleepCalls++
 		},
-		PollInterval: powerapi.PollInterval,
+		pollInterval: pollInterval,
 	}
 
-	err := powerapi.ShutdownPrinter(cfg, deps)
+	err := shutdownPrinter(cfg, deps)
 	if err != nil {
 		t.Fatalf("shutdownPrinter returned error: %v", err)
 	}
@@ -314,13 +304,13 @@ func TestShutdownPrinter_RetriesWhenTempReadFails(t *testing.T) {
 }
 
 func TestShutdownPrinter_WaitsUntilHostBecomesUnreachable(t *testing.T) {
-	cfg := &powerapi.Config{
+	cfg := &Config{
 		MoonrakerURL:  "http://moonraker.local",
 		SSHHost:       "printer-host",
 		SSHUser:       "root",
 		SSHPass:       "secret",
 		SSHHostPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfakefakefakefakefakefakefakefake test@local",
-		ThresholdTemp: powerapi.DefaultThresholdTemp,
+		ThresholdTemp: defaultThresholdTemp,
 	}
 
 	var (
@@ -328,22 +318,22 @@ func TestShutdownPrinter_WaitsUntilHostBecomesUnreachable(t *testing.T) {
 		sleepCalls      int
 	)
 
-	deps := powerapi.ShutdownDeps{
-		IsPrinterFinished:      func(string) (bool, error) { return true, nil },
-		GetCurrentExtruderTemp: func(string) (int, error) { return cfg.ThresholdTemp - 1, nil },
-		SendSSHCommand:         func(string, string, string, string, string) error { return nil },
-		IsHostReachable: func(string) bool {
+	deps := shutdownDeps{
+		isPrinterFinished:      func(string) (bool, error) { return true, nil },
+		getCurrentExtruderTemp: func(string) (int, error) { return cfg.ThresholdTemp - 1, nil },
+		sendSSHCommand:         func(string, string, string, string, string) error { return nil },
+		isHostReachable: func(string) bool {
 			reachableChecks++
 			return reachableChecks < 3
 		},
-		PublishMQTTState: func(string, string) error { return nil },
-		Sleep: func(time.Duration) {
+		publishMQTTState: func(string, string) error { return nil },
+		sleep: func(time.Duration) {
 			sleepCalls++
 		},
-		PollInterval: powerapi.PollInterval,
+		pollInterval: pollInterval,
 	}
 
-	err := powerapi.ShutdownPrinter(cfg, deps)
+	err := shutdownPrinter(cfg, deps)
 	if err != nil {
 		t.Fatalf("shutdownPrinter returned error: %v", err)
 	}

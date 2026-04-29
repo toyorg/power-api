@@ -15,7 +15,7 @@ func handleGetPrinterState(client mqtt.Client, _ *Config) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), mqttCommandTimeout)
 		defer cancel()
 
-		state, err := getMQTTState(ctx, client, "zigbee2mqtt/R")
+		state, err := getMQTTState(ctx, client, topicPrinterState)
 		if err != nil {
 			log.Printf("failed to get printer state: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve printer state"})
@@ -40,17 +40,17 @@ func handlePostPrinterControlWithShutdown(client mqtt.Client, cfg *Config, shutd
 		}
 
 		switch req.State {
-		case "ON":
-			if err := publishMQTTState(client, "zigbee2mqtt/R/set", "ON"); err != nil {
+		case stateON:
+			if err := publishMQTTState(client, topicPrinterSet, stateON); err != nil {
 				log.Printf("failed to publish ON state: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to turn on printer"})
 				return
 			}
-			c.JSON(http.StatusOK, StateResponse{State: "ON"})
+			c.JSON(http.StatusOK, StateResponse{State: stateON})
 
-		case "OFF":
+		case stateOFF:
 			if !shutdownInProgress.CompareAndSwap(false, true) {
-				c.JSON(http.StatusOK, StateResponse{State: "ON"})
+				c.JSON(http.StatusOK, StateResponse{State: stateON})
 				return
 			}
 
@@ -62,7 +62,7 @@ func handlePostPrinterControlWithShutdown(client mqtt.Client, cfg *Config, shutd
 
 			defer shutdownInProgress.Store(false)
 
-			c.JSON(http.StatusOK, StateResponse{State: "OFF"})
+			c.JSON(http.StatusOK, StateResponse{State: stateOFF})
 
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid state"})

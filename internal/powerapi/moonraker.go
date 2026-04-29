@@ -4,15 +4,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
+
+var moonrakerHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 // isPrinterFinished checks if the printer has finished printing.
 func isPrinterFinished(baseURL string) (bool, error) {
-	resp, err := http.Get(fmt.Sprintf("%s/printer/objects/query?print_stats", baseURL))
+	resp, err := moonrakerHTTPClient.Get(baseURL + "/printer/objects/query?print_stats")
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("unexpected status code %d from printer status", resp.StatusCode)
+	}
 
 	var result printerStatusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -25,11 +32,15 @@ func isPrinterFinished(baseURL string) (bool, error) {
 
 // getCurrentExtruderTemperature fetches and calculates the average extruder temperature.
 func getCurrentExtruderTemperature(baseURL string) (int, error) {
-	resp, err := http.Get(fmt.Sprintf("%s/server/temperature_store", baseURL))
+	resp, err := moonrakerHTTPClient.Get(baseURL + "/server/temperature_store")
 	if err != nil {
 		return 0, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("unexpected status code %d from temperature store", resp.StatusCode)
+	}
 
 	var result temperatureResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
