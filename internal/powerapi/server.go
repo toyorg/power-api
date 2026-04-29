@@ -8,17 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var (
-	runLoadConfig = loadConfig
-	runNewMQTT    = newMQTTClient
-	runHTTPServer = func(router *gin.Engine) error {
-		return router.Run(serverPort)
-	}
-)
-
 // Run loads configuration, initializes dependencies, and starts the HTTP server.
 func Run() error {
-	return runWithDeps(runLoadConfig, runNewMQTT, runHTTPServer)
+	return runWithDeps(loadConfig, newMQTTClient, func(router *gin.Engine) error {
+		return router.Run(serverPort)
+	})
 }
 
 func runWithDeps(

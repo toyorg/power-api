@@ -1,4 +1,4 @@
-package tests
+package powerapi
 
 import (
 	"bytes"
@@ -6,14 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	powerapi "power-api/src"
 )
 
 func TestAPI_GetPrinterState_OK(t *testing.T) {
@@ -23,7 +22,7 @@ func TestAPI_GetPrinterState_OK(t *testing.T) {
 		subscribeBody: `{"state":"ON"}`,
 	}
 	router := gin.New()
-	router.GET("/api/3d-printer", powerapi.NewGetPrinterStateHandler(client, &powerapi.Config{}))
+	router.GET("/api/3d-printer", handleGetPrinterState(client, &Config{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/3d-printer", nil)
 	rec := httptest.NewRecorder()
@@ -35,8 +34,8 @@ func TestAPI_GetPrinterState_OK(t *testing.T) {
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"state":"ON"}` {
 		t.Fatalf("unexpected response body: %s", got)
 	}
-	if client.subscribedTo != "zigbee2mqtt/R" {
-		t.Fatalf("expected subscription to zigbee2mqtt/R, got %s", client.subscribedTo)
+	if client.subscribedTo != topicPrinterState {
+		t.Fatalf("expected subscription to %s, got %s", topicPrinterState, client.subscribedTo)
 	}
 }
 
@@ -45,7 +44,7 @@ func TestAPI_GetPrinterState_InvalidMQTTPayload(t *testing.T) {
 
 	client := &fakeMQTTClient{subscribeBody: `{"state":`}
 	router := gin.New()
-	router.GET("/api/3d-printer", powerapi.NewGetPrinterStateHandler(client, &powerapi.Config{}))
+	router.GET("/api/3d-printer", handleGetPrinterState(client, &Config{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/3d-printer", nil)
 	rec := httptest.NewRecorder()
@@ -61,7 +60,7 @@ func TestAPI_GetPrinterState_SubscribeError(t *testing.T) {
 
 	client := &fakeMQTTClient{subscribeToken: &fakeToken{waitResult: true, err: errors.New("subscribe failed")}}
 	router := gin.New()
-	router.GET("/api/3d-printer", powerapi.NewGetPrinterStateHandler(client, &powerapi.Config{}))
+	router.GET("/api/3d-printer", handleGetPrinterState(client, &Config{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/3d-printer", nil)
 	rec := httptest.NewRecorder()
@@ -77,7 +76,7 @@ func TestAPI_PostPrinterState_ON_OK(t *testing.T) {
 
 	client := &fakeMQTTClient{publishToken: &fakeToken{waitResult: true}}
 	router := gin.New()
-	router.POST("/api/3d-printer", powerapi.NewPostPrinterControlHandler(client, &powerapi.Config{}))
+	router.POST("/api/3d-printer", handlePostPrinterControl(client, &Config{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/3d-printer", bytes.NewBufferString(`{"state":"ON"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -90,8 +89,8 @@ func TestAPI_PostPrinterState_ON_OK(t *testing.T) {
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"state":"ON"}` {
 		t.Fatalf("unexpected response body: %s", got)
 	}
-	if client.publishedTopic != "zigbee2mqtt/R/set" {
-		t.Fatalf("expected publish topic zigbee2mqtt/R/set, got %s", client.publishedTopic)
+	if client.publishedTopic != topicPrinterSet {
+		t.Fatalf("expected publish topic %s, got %s", topicPrinterSet, client.publishedTopic)
 	}
 	if payload, _ := client.payload.(string); payload != `{"state": "ON"}` {
 		t.Fatalf("unexpected published payload: %v", client.payload)
@@ -103,7 +102,7 @@ func TestAPI_PostPrinterState_ON_PublishError(t *testing.T) {
 
 	client := &fakeMQTTClient{publishToken: &fakeToken{waitResult: true, err: errors.New("publish failed")}}
 	router := gin.New()
-	router.POST("/api/3d-printer", powerapi.NewPostPrinterControlHandler(client, &powerapi.Config{}))
+	router.POST("/api/3d-printer", handlePostPrinterControl(client, &Config{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/3d-printer", bytes.NewBufferString(`{"state":"ON"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -120,7 +119,7 @@ func TestAPI_PostPrinterState_InvalidRequest(t *testing.T) {
 
 	client := &fakeMQTTClient{}
 	router := gin.New()
-	router.POST("/api/3d-printer", powerapi.NewPostPrinterControlHandler(client, &powerapi.Config{}))
+	router.POST("/api/3d-printer", handlePostPrinterControl(client, &Config{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/3d-printer", bytes.NewBufferString(`{"state":"INVALID"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -138,7 +137,7 @@ func TestAPI_PostPrinterState_OFF_OK(t *testing.T) {
 
 	client := &fakeMQTTClient{}
 	router := gin.New()
-	router.POST("/api/3d-printer", powerapi.NewPostPrinterControlHandlerWithShutdown(client, &powerapi.Config{}, func(_ *powerapi.Config, _ powerapi.ShutdownDeps) error {
+	router.POST("/api/3d-printer", handlePostPrinterControlWithShutdown(client, &Config{}, func(_ *Config, _ shutdownDeps) error {
 		return nil
 	}))
 
@@ -160,7 +159,7 @@ func TestAPI_PostPrinterState_OFF_ShutdownError(t *testing.T) {
 
 	client := &fakeMQTTClient{}
 	router := gin.New()
-	router.POST("/api/3d-printer", powerapi.NewPostPrinterControlHandlerWithShutdown(client, &powerapi.Config{}, func(_ *powerapi.Config, _ powerapi.ShutdownDeps) error {
+	router.POST("/api/3d-printer", handlePostPrinterControlWithShutdown(client, &Config{}, func(_ *Config, _ shutdownDeps) error {
 		return errors.New("shutdown failed")
 	}))
 
@@ -185,7 +184,7 @@ func TestAPI_PostPrinterState_OFF_OnlyOnePendingShutdown(t *testing.T) {
 	var startedOnce sync.Once
 	var shutdownCalls atomic.Int32
 
-	router.POST("/api/3d-printer", powerapi.NewPostPrinterControlHandlerWithShutdown(client, &powerapi.Config{}, func(_ *powerapi.Config, _ powerapi.ShutdownDeps) error {
+	router.POST("/api/3d-printer", handlePostPrinterControlWithShutdown(client, &Config{}, func(_ *Config, _ shutdownDeps) error {
 		shutdownCalls.Add(1)
 		startedOnce.Do(func() { close(started) })
 		<-finish
@@ -221,7 +220,7 @@ func TestAPI_PostPrinterState_OFF_OnlyOnePendingShutdown(t *testing.T) {
 	}
 
 	if got := shutdownCalls.Load(); got != 1 {
-		t.Fatalf("expected one shutdown call while pending, got %d", got)
+		t.Fatalf("expected one shutdown call while pending, got %d", shutdownCalls.Load())
 	}
 
 	close(finish)
@@ -240,6 +239,6 @@ func TestAPI_PostPrinterState_OFF_OnlyOnePendingShutdown(t *testing.T) {
 	}
 
 	if got := shutdownCalls.Load(); got != 1 {
-		t.Fatalf("expected total shutdown call count to stay at 1, got %d", got)
+		t.Fatalf("expected total shutdown call count to stay at 1, got %d", shutdownCalls.Load())
 	}
 }

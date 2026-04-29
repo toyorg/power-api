@@ -1,12 +1,10 @@
-package tests
+package powerapi
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	powerapi "power-api/src"
 )
 
 func TestIsPrinterFinished(t *testing.T) {
@@ -33,7 +31,7 @@ func TestIsPrinterFinished(t *testing.T) {
 			}))
 			defer server.Close()
 
-			finished, err := powerapi.IsPrinterFinished(server.URL)
+			finished, err := isPrinterFinished(server.URL)
 			if err != nil {
 				t.Fatalf("isPrinterFinished returned error: %v", err)
 			}
@@ -50,7 +48,7 @@ func TestIsPrinterFinished_DecodeError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := powerapi.IsPrinterFinished(server.URL)
+	_, err := isPrinterFinished(server.URL)
 	if err == nil {
 		t.Fatal("expected decode error, got nil")
 	}
@@ -60,9 +58,24 @@ func TestIsPrinterFinished_DecodeError(t *testing.T) {
 }
 
 func TestIsPrinterFinished_HTTPError(t *testing.T) {
-	_, err := powerapi.IsPrinterFinished("http://127.0.0.1:0")
+	_, err := isPrinterFinished("http://127.0.0.1:0")
 	if err == nil {
 		t.Fatal("expected HTTP error, got nil")
+	}
+}
+
+func TestIsPrinterFinished_NonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	_, err := isPrinterFinished(server.URL)
+	if err == nil {
+		t.Fatal("expected error for non-OK status, got nil")
+	}
+	if !strings.Contains(err.Error(), "unexpected status code") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -75,7 +88,7 @@ func TestGetCurrentExtruderTemperature(t *testing.T) {
 	}))
 	defer server.Close()
 
-	temp, err := powerapi.GetCurrentExtruderTemperature(server.URL)
+	temp, err := getCurrentExtruderTemperature(server.URL)
 	if err != nil {
 		t.Fatalf("getCurrentExtruderTemperature returned error: %v", err)
 	}
@@ -91,7 +104,7 @@ func TestGetCurrentExtruderTemperature_InsufficientSamples(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := powerapi.GetCurrentExtruderTemperature(server.URL)
+	_, err := getCurrentExtruderTemperature(server.URL)
 	if err == nil {
 		t.Fatal("expected insufficient samples error, got nil")
 	}
@@ -106,7 +119,7 @@ func TestGetCurrentExtruderTemperature_NotEnoughValidReadings(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := powerapi.GetCurrentExtruderTemperature(server.URL)
+	_, err := getCurrentExtruderTemperature(server.URL)
 	if err == nil {
 		t.Fatal("expected valid readings error, got nil")
 	}
@@ -121,11 +134,26 @@ func TestGetCurrentExtruderTemperature_DecodeError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := powerapi.GetCurrentExtruderTemperature(server.URL)
+	_, err := getCurrentExtruderTemperature(server.URL)
 	if err == nil {
 		t.Fatal("expected decode error, got nil")
 	}
 	if !strings.Contains(err.Error(), "failed to decode temperature data") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetCurrentExtruderTemperature_NonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	_, err := getCurrentExtruderTemperature(server.URL)
+	if err == nil {
+		t.Fatal("expected error for non-OK status, got nil")
+	}
+	if !strings.Contains(err.Error(), "unexpected status code") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

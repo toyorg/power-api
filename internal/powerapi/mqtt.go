@@ -26,19 +26,27 @@ func onMQTTReconnecting(_ mqtt.Client, _ *mqtt.ClientOptions) {
 func getMQTTState(ctx context.Context, client mqtt.Client, topic string) (string, error) {
 	messageChan := make(chan string, 1)
 	errChan := make(chan error, 1)
+	done := make(chan struct{})
+	defer close(done)
 
 	callback := func(_ mqtt.Client, msg mqtt.Message) {
 		var response mqttStateMessage
 		if err := json.Unmarshal(msg.Payload(), &response); err != nil {
-			errChan <- fmt.Errorf("failed to parse MQTT message: %w", err)
+			select {
+			case errChan <- fmt.Errorf("failed to parse MQTT message: %w", err):
+			case <-done:
+			}
 			return
 		}
-		messageChan <- response.State
+		select {
+		case messageChan <- response.State:
+		case <-done:
+		}
 	}
 
 	token := client.Subscribe(topic, 0, callback)
 	if !token.WaitTimeout(mqttCommandTimeout) || token.Error() != nil {
-		return "", fmt.Errorf("failed to subscribe to topic %s: %v", topic, token.Error())
+		return "", fmt.Errorf("failed to subscribe to topic %s: %w", topic, token.Error())
 	}
 	defer func() {
 		token := client.Unsubscribe(topic)
@@ -76,26 +84,26 @@ func newMQTTClientWithFactory(host, user, pass string, newClientFn func(*mqtt.Cl
 		SetOnConnectHandler(onMQTTConnect).
 		SetReconnectingHandler(onMQTTReconnecting)
 
-	client := newClientFn(opts)
-
-	// Retry connecting indefinitely until successful
-	for {
+	for attempt := 1; attempt <= mqttConnectMaxRetries; attempt++ {
+		client := newClientFn(opts)
 		token := client.Connect()
-		if token.WaitTimeout(mqttConnectTimeout) && token.Error() == nil {
-			break // Connected successfully
+		if token.WaitTimeout(mqttConnectTimeout) {
+			if token.Error() != nil {
+				return nil, fmt.Errorf("failed to connect to MQTT broker: %w", token.Error())
+			}
+			return client, nil
 		}
-		log.Printf("Failed to connect to MQTT broker, retrying in 5 seconds...")
-		time.Sleep(5 * time.Second)
+		log.Printf("MQTT connection attempt %d timed out, retrying...", attempt)
 	}
 
-	return client, nil
+	return nil, fmt.Errorf("MQTT connection timeout")
 }
 
 func publishMQTTState(client mqtt.Client, topic, state string) error {
 	payload := fmt.Sprintf(`{"state": "%s"}`, state)
 	token := client.Publish(topic, 0, false, payload)
 	if !token.WaitTimeout(5*time.Second) || token.Error() != nil {
-		return fmt.Errorf("failed to publish to topic %s: %v", topic, token.Error())
+		return fmt.Errorf("failed to publish to topic %s: %w", topic, token.Error())
 	}
 	return nil
 }

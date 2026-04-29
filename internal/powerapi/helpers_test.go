@@ -1,4 +1,4 @@
-package tests
+package powerapi
 
 import (
 	"time"
@@ -33,16 +33,18 @@ func (t *fakeToken) Error() error {
 }
 
 type fakeMQTTClient struct {
-	connectToken   mqtt.Token
-	publishToken   mqtt.Token
-	subscribeToken mqtt.Token
-	disconnects    int
-	publishedTopic string
-	publishedQos   byte
-	publishedRet   bool
-	payload        interface{}
-	subscribedTo   string
-	subscribeBody  string
+	connectToken     mqtt.Token
+	connectTokens    []mqtt.Token
+	connectCallCount int
+	publishToken     mqtt.Token
+	subscribeToken   mqtt.Token
+	disconnects      int
+	publishedTopic   string
+	publishedQos     byte
+	publishedRet     bool
+	payload          interface{}
+	subscribedTo     string
+	subscribeBody    string
 }
 
 func (c *fakeMQTTClient) IsConnected() bool { return true }
@@ -50,6 +52,13 @@ func (c *fakeMQTTClient) IsConnected() bool { return true }
 func (c *fakeMQTTClient) IsConnectionOpen() bool { return true }
 
 func (c *fakeMQTTClient) Connect() mqtt.Token {
+	c.connectCallCount++
+	if len(c.connectTokens) > 0 {
+		if c.connectCallCount <= len(c.connectTokens) {
+			return c.connectTokens[c.connectCallCount-1]
+		}
+		return &fakeToken{waitResult: true}
+	}
 	if c.connectToken != nil {
 		return c.connectToken
 	}
