@@ -3,9 +3,15 @@ name: Docker Create Image
 on:
   push:
     branches: ["main"]
-    paths: ["**/*.go", "go.mod", "go.sum", "Dockerfile", ".github/workflows/docker-create-image.yml"]
+    paths:
+      [
+        "**/*.go",
+        "go.mod",
+        "go.sum",
+        "Dockerfile",
+        ".github/workflows/docker-create-image.yml",
+      ]
   pull_request:
-    paths: ["**/*.go", "go.mod", "go.sum", "Dockerfile", ".github/workflows/docker-create-image.yml"]
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
