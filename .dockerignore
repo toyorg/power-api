@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+.github
+
+# IDE & editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+template.env
+
+# CI / project config
+renovate.json
+Makefile
+Dockerfile
+.dockerignore
+
+# Documentation
+README.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Test artifacts
+*/*_test.go
